@@ -17,8 +17,15 @@
         <PackageReference Include="LavaGang.MelonLoader" Version="0.7.2" />
     </ItemGroup>
 
-    <!-- Il2CppInterop runtime assemblies -->
-    <ItemGroup>
+    <!-- CI Build: Use NuGet packages -->
+    <ItemGroup Condition="'$(CIBuild)' == 'true'">
+        <PackageReference Include="Il2CppInterop.Runtime" Version="1.4.5.0" />
+        <PackageReference Include="Il2CppInterop.Common" Version="1.4.5.0" />
+        <PackageReference Include="Unity3D.UnityEngine" Version="2018.3.5.1" />
+    </ItemGroup>
+
+    <!-- Local Build: Use local MelonLoader assemblies -->
+    <ItemGroup Condition="'$(CIBuild)' != 'true'">
         <Reference Include="Il2CppInterop.Runtime">
             <HintPath>$(GamePath)\MelonLoader\net6\Il2CppInterop.Runtime.dll</HintPath>
             <Private>false</Private>
@@ -27,10 +34,6 @@
             <HintPath>$(GamePath)\MelonLoader\net6\Il2CppInterop.Common.dll</HintPath>
             <Private>false</Private>
         </Reference>
-    </ItemGroup>
-
-    <!-- Generated Il2Cpp assemblies -->
-    <ItemGroup>
         <Reference Include="Il2Cppmscorlib">
             <HintPath>$(GamePath)\MelonLoader\Il2CppAssemblies\Il2Cppmscorlib.dll</HintPath>
             <Private>false</Private>
@@ -43,7 +46,6 @@
             <HintPath>$(GamePath)\MelonLoader\Il2CppAssemblies\UnityEngine.InputLegacyModule.dll</HintPath>
             <Private>false</Private>
         </Reference>
-        <!-- Game assembly for direct type access -->
         <Reference Include="Assembly-CSharp">
             <HintPath>$(GamePath)\MelonLoader\Il2CppAssemblies\Assembly-CSharp.dll</HintPath>
             <Private>false</Private>

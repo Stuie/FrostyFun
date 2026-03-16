@@ -53,43 +53,16 @@ jobs:
         with:
           dotnet-version: '6.0.x'
 
-      - name: Create mock Il2Cpp assemblies
-        run: |
-          # Create directories for mock assemblies
-          mkdir -p "MockAssemblies/Il2CppAssemblies"
-          mkdir -p "MockAssemblies/net6"
+      - name: Build TMPro stubs
+        run: dotnet build BuildStubs/BuildStubs.csproj -c Release
 
-          # Create minimal empty DLLs to satisfy compiler references
-          # These are just placeholders - runtime uses real MelonLoader assemblies
-          ASSEMBLIES=(
-            "Il2CppAssemblies/Il2Cppmscorlib.dll"
-            "Il2CppAssemblies/UnityEngine.CoreModule.dll"
-            "Il2CppAssemblies/UnityEngine.InputLegacyModule.dll"
-            "Il2CppAssemblies/UnityEngine.UI.dll"
-            "Il2CppAssemblies/UnityEngine.UIModule.dll"
-            "Il2CppAssemblies/Unity.TextMeshPro.dll"
-            "Il2CppAssemblies/Assembly-CSharp.dll"
-            "net6/Il2CppInterop.Runtime.dll"
-            "net6/Il2CppInterop.Common.dll"
-          )
-
-          for asm in "${ASSEMBLIES[@]}"; do
-            # Create empty file (not valid PE but enough for reference resolution in some cases)
-            touch "MockAssemblies/$asm"
-          done
-
-      - name: Restore dependencies
-        run: dotnet restore "${{ steps.parse.outputs.project_dir }}/${{ steps.parse.outputs.project_dir }}.csproj"
-        env:
-          GamePath: ${{ github.workspace }}/MockAssemblies
-
-      - name: Build
+      - name: Build mod
         run: |
           dotnet build "${{ steps.parse.outputs.project_dir }}/${{ steps.parse.outputs.project_dir }}.csproj" \
             -c Release \
             -p:Version=${{ steps.parse.outputs.version }} \
-            -p:GamePath="${{ github.workspace }}/MockAssemblies" \
-            --no-restore
+            -p:CIBuild=true \
+            -p:StubsPath="${{ github.workspace }}/BuildStubs/bin/Release/net6.0"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
