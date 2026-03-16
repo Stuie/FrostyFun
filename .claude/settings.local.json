@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch",
+      "WebFetch(domain:melonwiki.xyz)",
+      "WebFetch(domain:steamcommunity.com)",
+      "WebFetch(domain:www.nuget.org)",
+      "Bash(dotnet restore:*)",
+      "Bash(dotnet build:*)",
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(gh api:*)",
+      "Bash(strings:*)",
+      "Bash(dotnet:*)"
+    ]
+  }
+}
