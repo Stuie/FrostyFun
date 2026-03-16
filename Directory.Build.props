@@ -1,0 +1,11 @@
+<Project>
+    <PropertyGroup>
+        <!-- Shared mod metadata -->
+        <ModAuthor>Stuart Gilbert</ModAuthor>
+        <GameCompany>The Sledding Corporation</GameCompany>
+        <GameName>Sledding Game Demo</GameName>
+
+        <!-- Default version if not specified -->
+        <Version Condition="'$(Version)' == ''">1.0.0</Version>
+    </PropertyGroup>
+</Project>

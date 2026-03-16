@@ -5,7 +5,12 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>disable</Nullable>
         <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-        <GamePath>C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo</GamePath>
+        <GamePath Condition="'$(GamePath)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo</GamePath>
+
+        <!-- Mod metadata for MelonLoader -->
+        <Version>1.0.0</Version>
+        <ModClassName>TestMod.TestModMain</ModClassName>
+        <ModDisplayName>TestMod</ModDisplayName>
     </PropertyGroup>
 
     <ItemGroup>

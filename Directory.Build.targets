@@ -1,0 +1,25 @@
+<Project>
+    <!-- Generate MelonLoader assembly attributes at build time -->
+    <Target Name="GenerateMelonAssemblyInfo" BeforeTargets="CoreCompile"
+            Condition="'$(ModClassName)' != '' AND '$(ModDisplayName)' != ''">
+
+        <PropertyGroup>
+            <MelonAssemblyInfoPath>$(IntermediateOutputPath)MelonAssemblyInfo.g.cs</MelonAssemblyInfoPath>
+            <MelonAssemblyInfoLine1>// &lt;auto-generated/&gt;</MelonAssemblyInfoLine1>
+            <MelonAssemblyInfoLine2>using MelonLoader%3B</MelonAssemblyInfoLine2>
+            <MelonAssemblyInfoLine3>[assembly: MelonInfo(typeof($(ModClassName)), "$(ModDisplayName)", "$(Version)", "$(ModAuthor)")]</MelonAssemblyInfoLine3>
+            <MelonAssemblyInfoLine4>[assembly: MelonGame("$(GameCompany)", "$(GameName)")]</MelonAssemblyInfoLine4>
+        </PropertyGroup>
+
+        <WriteLinesToFile File="$(MelonAssemblyInfoPath)"
+                          Lines="$(MelonAssemblyInfoLine1);$(MelonAssemblyInfoLine2);$(MelonAssemblyInfoLine3);$(MelonAssemblyInfoLine4)"
+                          Overwrite="true"
+                          WriteOnlyWhenDifferent="true" />
+
+        <ItemGroup>
+            <Compile Include="$(MelonAssemblyInfoPath)" Condition="Exists('$(MelonAssemblyInfoPath)')" />
+        </ItemGroup>
+
+        <Message Importance="high" Text="Generated MelonAssemblyInfo with Version=$(Version) for $(ModDisplayName)" />
+    </Target>
+</Project>

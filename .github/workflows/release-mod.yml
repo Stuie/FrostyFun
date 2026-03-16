@@ -1,0 +1,102 @@
+name: Release Mod
+
+on:
+  push:
+    tags:
+      - '*-v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse tag
+        id: parse
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+          # Extract mod name and version from tag (e.g., snowmanmod-v1.2.0)
+          MOD_NAME=$(echo "$TAG" | sed 's/-v.*//')
+          VERSION=$(echo "$TAG" | sed 's/.*-v//')
+
+          echo "mod_name=$MOD_NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          # Map lowercase tag name to project directory
+          case "$MOD_NAME" in
+            snowmanmod)
+              PROJECT_DIR="SnowmanMod"
+              ;;
+            menuqol)
+              PROJECT_DIR="MenuQOL"
+              ;;
+            testmod)
+              PROJECT_DIR="TestMod"
+              ;;
+            *)
+              echo "Unknown mod: $MOD_NAME"
+              exit 1
+              ;;
+          esac
+
+          echo "project_dir=$PROJECT_DIR" >> $GITHUB_OUTPUT
+          echo "Parsed: mod=$MOD_NAME version=$VERSION project=$PROJECT_DIR"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+
+      - name: Create mock Il2Cpp assemblies
+        run: |
+          # Create directories for mock assemblies
+          mkdir -p "MockAssemblies/Il2CppAssemblies"
+          mkdir -p "MockAssemblies/net6"
+
+          # Create minimal empty DLLs to satisfy compiler references
+          # These are just placeholders - runtime uses real MelonLoader assemblies
+          ASSEMBLIES=(
+            "Il2CppAssemblies/Il2Cppmscorlib.dll"
+            "Il2CppAssemblies/UnityEngine.CoreModule.dll"
+            "Il2CppAssemblies/UnityEngine.InputLegacyModule.dll"
+            "Il2CppAssemblies/UnityEngine.UI.dll"
+            "Il2CppAssemblies/UnityEngine.UIModule.dll"
+            "Il2CppAssemblies/Unity.TextMeshPro.dll"
+            "Il2CppAssemblies/Assembly-CSharp.dll"
+            "net6/Il2CppInterop.Runtime.dll"
+            "net6/Il2CppInterop.Common.dll"
+          )
+
+          for asm in "${ASSEMBLIES[@]}"; do
+            # Create empty file (not valid PE but enough for reference resolution in some cases)
+            touch "MockAssemblies/$asm"
+          done
+
+      - name: Restore dependencies
+        run: dotnet restore "${{ steps.parse.outputs.project_dir }}/${{ steps.parse.outputs.project_dir }}.csproj"
+        env:
+          GamePath: ${{ github.workspace }}/MockAssemblies
+
+      - name: Build
+        run: |
+          dotnet build "${{ steps.parse.outputs.project_dir }}/${{ steps.parse.outputs.project_dir }}.csproj" \
+            -c Release \
+            -p:Version=${{ steps.parse.outputs.version }} \
+            -p:GamePath="${{ github.workspace }}/MockAssemblies" \
+            --no-restore
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "${{ steps.parse.outputs.project_dir }} v${{ steps.parse.outputs.version }}"
+          files: |
+            ${{ steps.parse.outputs.project_dir }}/bin/Release/net6.0/${{ steps.parse.outputs.project_dir }}.dll
+          generate_release_notes: true
+          draft: false
+          prerelease: false
