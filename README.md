@@ -26,11 +26,13 @@ Menu quality-of-life improvements for the hosting flow.
 
 ### TestMod
 
-Minimal developer utility for verifying MelonLoader is working. Logs a message on load, no gameplay features.
+Minimal developer utility for verifying MelonLoader is working. Logs a message on pressing F7, no gameplay features.
 
 ## Requirements
 
-- [MelonLoader](https://melonwiki.xyz/) v0.6+ installed on Sledding Game Demo
+These are either requirements, or the only versions I tested with.
+
+- [MelonLoader](https://melonwiki.xyz/) v0.7+ installed on Sledding Game Demo
 - .NET 6.0 SDK for building
 
 ## Building
@@ -74,4 +76,4 @@ This game uses Il2Cpp, so Unity assemblies are generated at runtime:
 
 ## License
 
-MIT
+MIT, see LICENSE file.
