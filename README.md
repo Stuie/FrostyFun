@@ -21,8 +21,22 @@ Menu quality-of-life improvements for the hosting flow.
 **Controls:**
 | Key | Action |
 |-----|--------|
-| F6 | Toggle auto-confirm host dialog (default: ON) |
 | F7 | Dump UI elements to log (development) |
+
+### CharacterSelect
+
+Quick character switching via a visual UI.
+
+**Features:**
+- Press F6 to open a visual character selection grid with 15 characters
+- Shows character icons where available, placeholder for others
+- Remembers your selection across sessions
+- Detects in-game character changes and respects them
+
+**Controls:**
+| Key | Action |
+|-----|--------|
+| F6 | Open/close character selection UI |
 
 ### TestMod
 
@@ -63,6 +77,9 @@ cp SnowmanMod/bin/Release/net6.0/SnowmanMod.dll "C:\Program Files (x86)\Steam\st
 
 # MenuQOL
 cp MenuQOL/bin/Release/net6.0/MenuQOL.dll "C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\"
+
+# CharacterSelect
+cp CharacterSelect/bin/Release/net6.0/CharacterSelect.dll "C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\"
 ```
 
 ## First-Time Setup
