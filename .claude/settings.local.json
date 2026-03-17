@@ -13,7 +13,8 @@
       "Bash(find:*)",
       "Bash(gh api:*)",
       "Bash(strings:*)",
-      "Bash(dotnet:*)"
+      "Bash(dotnet:*)",
+      "Bash(git stash:*)"
     ]
   }
 }

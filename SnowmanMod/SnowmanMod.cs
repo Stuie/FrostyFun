@@ -20,6 +20,10 @@ public class SnowmanModMain : MelonMod
     private Transform _playerTransform;
     private bool _foundRealPlayer;
 
+    // Cached hat sources from the shop
+    private List<Transform> _hatSources = new();
+    private bool _hatSourcesCached;
+
     private class SnowmanHead
     {
         public Transform BallTransform;
@@ -45,6 +49,8 @@ public class SnowmanModMain : MelonMod
         _playerTransform = null;
         _foundRealPlayer = false;
         _lastScanTime = 0;
+        _hatSources.Clear();
+        _hatSourcesCached = false;
 
         if (_inGame)
         {
@@ -155,6 +161,9 @@ public class SnowmanModMain : MelonMod
             Transform faceTransform = FindFaceChild(highestBall);
             if (faceTransform == null) continue;
 
+            // Randomize the hat on this new snowman
+            RandomizeHat(faceTransform);
+
             // Add to tracking
             var snowmanHead = new SnowmanHead
             {
@@ -196,6 +205,97 @@ public class SnowmanModMain : MelonMod
             }
         }
         return null;
+    }
+
+    private void CacheHatSources()
+    {
+        if (_hatSourcesCached) return;
+        _hatSourcesCached = true;
+
+        // Find the hat shop backboard
+        var shopHats = GameObject.Find("Shop (hats)");
+        if (shopHats == null)
+        {
+            Melon<SnowmanModMain>.Logger.Warning("Could not find Shop (hats)");
+            return;
+        }
+
+        var backboard = shopHats.transform.Find("Backboard");
+        if (backboard == null)
+        {
+            Melon<SnowmanModMain>.Logger.Warning("Could not find Backboard in Shop (hats)");
+            return;
+        }
+
+        // Find all hat children (names starting with "(Hat)")
+        for (int i = 0; i < backboard.childCount; i++)
+        {
+            var child = backboard.GetChild(i);
+            if (child.name.StartsWith("(Hat)") && !child.name.Contains("Missing Prefab"))
+            {
+                _hatSources.Add(child);
+            }
+        }
+
+        Melon<SnowmanModMain>.Logger.Msg($"Cached {_hatSources.Count} hat sources from shop");
+    }
+
+    private void RandomizeHat(Transform faceTransform)
+    {
+        CacheHatSources();
+
+        if (_hatSources.Count == 0)
+        {
+            Melon<SnowmanModMain>.Logger.Warning("No hat sources available for randomization");
+            return;
+        }
+
+        // Find Face Graphics child
+        var faceGraphics = faceTransform.Find("Face Graphics");
+        if (faceGraphics == null)
+        {
+            Melon<SnowmanModMain>.Logger.Warning("Could not find Face Graphics");
+            return;
+        }
+
+        // Find the current hat on the snowman
+        Transform currentHat = null;
+        for (int i = 0; i < faceGraphics.childCount; i++)
+        {
+            var child = faceGraphics.GetChild(i);
+            if (child.name.StartsWith("(Hat)"))
+            {
+                currentHat = child;
+                break;
+            }
+        }
+
+        if (currentHat == null)
+        {
+            Melon<SnowmanModMain>.Logger.Warning("No existing hat found on snowman");
+            return;
+        }
+
+        // Pick a random hat source
+        int randomIndex = UnityEngine.Random.Range(0, _hatSources.Count);
+        var sourceHat = _hatSources[randomIndex];
+
+        // Clone the hat
+        var newHat = Object.Instantiate(sourceHat.gameObject, faceGraphics);
+        newHat.name = sourceHat.name + " (Randomized)";
+
+        // Copy position and rotation from the original hat
+        newHat.transform.localPosition = currentHat.localPosition;
+        newHat.transform.localRotation = currentHat.localRotation;
+        newHat.transform.localScale = currentHat.localScale;
+
+        // Make sure new hat is active
+        newHat.SetActive(true);
+
+        // Disable the original hat
+        currentHat.gameObject.SetActive(false);
+
+        Melon<SnowmanModMain>.Logger.Msg($"Randomized hat to: {sourceHat.name}");
     }
 
     private void UpdateTracking()
@@ -350,6 +450,55 @@ public class SnowmanModMain : MelonMod
         }
 
         Melon<SnowmanModMain>.Logger.Msg("=== END HIERARCHY ===");
+
+        // Also search for all hat objects in the scene
+        SearchForHats();
+    }
+
+    private void SearchForHats()
+    {
+        Melon<SnowmanModMain>.Logger.Msg("\n=== SEARCHING FOR HATS ===");
+
+        var allObjects = Object.FindObjectsOfType<GameObject>();
+        var hatObjects = new List<string>();
+
+        foreach (var obj in allObjects)
+        {
+            if (obj == null) continue;
+            string nameLower = obj.name.ToLower();
+            if (nameLower.Contains("hat") || nameLower.Contains("cap") || nameLower.Contains("helmet") || nameLower.Contains("beanie"))
+            {
+                string parentPath = GetParentPath(obj.transform);
+                hatObjects.Add($"\"{obj.name}\" at {parentPath} (active={obj.activeSelf})");
+            }
+        }
+
+        if (hatObjects.Count == 0)
+        {
+            Melon<SnowmanModMain>.Logger.Msg("No hat objects found");
+        }
+        else
+        {
+            Melon<SnowmanModMain>.Logger.Msg($"Found {hatObjects.Count} hat-related objects:");
+            foreach (var hat in hatObjects)
+            {
+                Melon<SnowmanModMain>.Logger.Msg($"  - {hat}");
+            }
+        }
+
+        Melon<SnowmanModMain>.Logger.Msg("=== END HAT SEARCH ===");
+    }
+
+    private string GetParentPath(Transform t)
+    {
+        var parts = new List<string>();
+        var current = t.parent;
+        while (current != null && parts.Count < 4)
+        {
+            parts.Insert(0, current.name);
+            current = current.parent;
+        }
+        return parts.Count > 0 ? string.Join("/", parts) : "(root)";
     }
 
     private void LogChildrenRecursive(Transform parent, int depth)
