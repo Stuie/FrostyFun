@@ -2,7 +2,7 @@
 
     <PropertyGroup>
         <TargetFramework>net6.0</TargetFramework>
-        <AssemblyName>UnityEngine.ImageConversionModule</AssemblyName>
+        <AssemblyName>Il2CppInterop.Stubs</AssemblyName>
         <Nullable>disable</Nullable>
         <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
         <IsPackable>false</IsPackable>

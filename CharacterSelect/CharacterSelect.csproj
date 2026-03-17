@@ -33,9 +33,9 @@
             <HintPath>$(StubsPath)\Unity.TextMeshPro.dll</HintPath>
             <Private>false</Private>
         </Reference>
-        <!-- ImageConversion stub (no NuGet package exists) -->
-        <Reference Include="UnityEngine.ImageConversionModule">
-            <HintPath>$(StubsPath)\UnityEngine.ImageConversionModule.dll</HintPath>
+        <!-- Il2CppInterop stubs for extension methods not in NuGet -->
+        <Reference Include="Il2CppInterop.Stubs">
+            <HintPath>$(StubsPath)\Il2CppInterop.Stubs.dll</HintPath>
             <Private>false</Private>
         </Reference>
     </ItemGroup>
