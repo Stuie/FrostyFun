@@ -29,6 +29,8 @@ public class SnowmanModMain : MelonMod
         public Transform BallTransform;
         public Transform FaceTransform;
         public int Id;
+        public float OriginalBallX;  // Preserve original X rotation
+        public float OriginalBallZ;  // Preserve original Z rotation
     }
 
     public override void OnInitializeMelon()
@@ -164,12 +166,17 @@ public class SnowmanModMain : MelonMod
             // Randomize the hat on this new snowman
             RandomizeHat(faceTransform);
 
+            // Store original ball rotation before we start modifying it
+            Vector3 originalEuler = highestBall.eulerAngles;
+
             // Add to tracking
             var snowmanHead = new SnowmanHead
             {
                 BallTransform = highestBall,
                 FaceTransform = faceTransform,
-                Id = headId
+                Id = headId,
+                OriginalBallX = originalEuler.x,
+                OriginalBallZ = originalEuler.z
             };
             _trackedHeads.Add(snowmanHead);
             _knownBallIds.Add(headId);
@@ -342,8 +349,8 @@ public class SnowmanModMain : MelonMod
         // Smooth rotation
         float smoothedY = Mathf.LerpAngle(currentBallY, targetBallY, SmoothSpeed * Time.deltaTime);
 
-        // Apply rotation to ball (keep it upright)
-        ball.rotation = Quaternion.Euler(0, smoothedY, 0);
+        // Apply rotation to ball, preserving original X/Z to maintain face orientation
+        ball.rotation = Quaternion.Euler(head.OriginalBallX, smoothedY, head.OriginalBallZ);
     }
 
     // ========== Methods kept for future mod menu / command integration ==========
@@ -418,6 +425,72 @@ public class SnowmanModMain : MelonMod
         }
 
         Melon<SnowmanModMain>.Logger.Msg("=== END DEBUG ===");
+    }
+
+    /// <summary>
+    /// Dump detailed rotation info for debugging face orientation issues.
+    /// Bound to F9 key.
+    /// </summary>
+    private void DumpRotationDebugInfo()
+    {
+        Melon<SnowmanModMain>.Logger.Msg("=== SNOWMAN DEBUG (F9) ===");
+        Melon<SnowmanModMain>.Logger.Msg($"Tracking {_trackedHeads.Count} snowmen");
+
+        if (_playerTransform != null)
+        {
+            var p = _playerTransform.position;
+            Melon<SnowmanModMain>.Logger.Msg($"Player position: ({p.x:F2}, {p.y:F2}, {p.z:F2})");
+        }
+
+        int snowmanNum = 0;
+        foreach (var head in _trackedHeads)
+        {
+            snowmanNum++;
+            if (head.BallTransform == null || head.FaceTransform == null)
+            {
+                Melon<SnowmanModMain>.Logger.Msg($"Snowman #{snowmanNum} (ID: {head.Id}): DESTROYED");
+                continue;
+            }
+
+            var ball = head.BallTransform;
+            var face = head.FaceTransform;
+
+            // Ball info
+            var ballPos = ball.position;
+            var ballEuler = ball.eulerAngles;
+            var ballQuat = ball.rotation;
+
+            // Face info
+            var faceLocalEuler = face.localEulerAngles;
+            var faceForward = face.forward;
+            var faceUp = face.up;
+
+            // Find Face Graphics for additional info
+            var faceGraphics = face.Find("Face Graphics");
+            string faceGraphicsInfo = "NOT FOUND";
+            if (faceGraphics != null)
+            {
+                var fgLocalEuler = faceGraphics.localEulerAngles;
+                faceGraphicsInfo = $"({fgLocalEuler.x:F1}, {fgLocalEuler.y:F1}, {fgLocalEuler.z:F1})";
+            }
+
+            // Check if face is tilted (face.forward.y should be close to 0 if horizontal)
+            float horizontalMag = Mathf.Sqrt(faceForward.x * faceForward.x + faceForward.z * faceForward.z);
+            string status = Mathf.Abs(faceForward.y) < 0.3f ? "OK" : $"TILTED (face.forward.y = {faceForward.y:F2})";
+
+            Melon<SnowmanModMain>.Logger.Msg($"\nSnowman #{snowmanNum} (ID: {head.Id}):");
+            Melon<SnowmanModMain>.Logger.Msg($"  Ball pos: ({ballPos.x:F2}, {ballPos.y:F2}, {ballPos.z:F2})");
+            Melon<SnowmanModMain>.Logger.Msg($"  Ball euler: ({ballEuler.x:F1}, {ballEuler.y:F1}, {ballEuler.z:F1})");
+            Melon<SnowmanModMain>.Logger.Msg($"  Ball quat: ({ballQuat.x:F3}, {ballQuat.y:F3}, {ballQuat.z:F3}, {ballQuat.w:F3})");
+            Melon<SnowmanModMain>.Logger.Msg($"  Original X/Z: ({head.OriginalBallX:F1}, {head.OriginalBallZ:F1})");
+            Melon<SnowmanModMain>.Logger.Msg($"  Face localEuler: ({faceLocalEuler.x:F1}, {faceLocalEuler.y:F1}, {faceLocalEuler.z:F1})");
+            Melon<SnowmanModMain>.Logger.Msg($"  Face forward: ({faceForward.x:F2}, {faceForward.y:F2}, {faceForward.z:F2}) [horiz mag: {horizontalMag:F2}]");
+            Melon<SnowmanModMain>.Logger.Msg($"  Face up: ({faceUp.x:F2}, {faceUp.y:F2}, {faceUp.z:F2})");
+            Melon<SnowmanModMain>.Logger.Msg($"  Face Graphics localEuler: {faceGraphicsInfo}");
+            Melon<SnowmanModMain>.Logger.Msg($"  Status: {status}");
+        }
+
+        Melon<SnowmanModMain>.Logger.Msg("\n=== END DEBUG ===");
     }
 
     /// <summary>
