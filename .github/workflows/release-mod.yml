@@ -39,6 +39,9 @@ jobs:
             testmod)
               PROJECT_DIR="TestMod"
               ;;
+            characterselect)
+              PROJECT_DIR="CharacterSelect"
+              ;;
             *)
               echo "Unknown mod: $MOD_NAME"
               exit 1
