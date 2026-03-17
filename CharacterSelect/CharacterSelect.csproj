@@ -17,6 +17,11 @@
         <PackageReference Include="LavaGang.MelonLoader" Version="0.7.2" />
     </ItemGroup>
 
+    <!-- Embed custom assets (icons) into the DLL -->
+    <ItemGroup>
+        <EmbeddedResource Include="Assets\*.png" />
+    </ItemGroup>
+
     <!-- CI Build: Use NuGet packages -->
     <ItemGroup Condition="'$(CIBuild)' == 'true'">
         <PackageReference Include="Il2CppInterop.Runtime" Version="1.4.5.0" />
@@ -26,6 +31,11 @@
         <!-- TMPro stub (no NuGet package exists) -->
         <Reference Include="Unity.TextMeshPro">
             <HintPath>$(StubsPath)\Unity.TextMeshPro.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <!-- ImageConversion stub (no NuGet package exists) -->
+        <Reference Include="UnityEngine.ImageConversionModule">
+            <HintPath>$(StubsPath)\UnityEngine.ImageConversionModule.dll</HintPath>
             <Private>false</Private>
         </Reference>
     </ItemGroup>
@@ -70,6 +80,10 @@
         </Reference>
         <Reference Include="UnityEngine.TextRenderingModule">
             <HintPath>$(GamePath)\MelonLoader\Il2CppAssemblies\UnityEngine.TextRenderingModule.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="UnityEngine.ImageConversionModule">
+            <HintPath>$(GamePath)\MelonLoader\Il2CppAssemblies\UnityEngine.ImageConversionModule.dll</HintPath>
             <Private>false</Private>
         </Reference>
         <Reference Include="Unity.TextMeshPro">

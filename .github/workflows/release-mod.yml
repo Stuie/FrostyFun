@@ -56,8 +56,12 @@ jobs:
         with:
           dotnet-version: '6.0.x'
 
-      - name: Build TMPro stubs
-        run: dotnet build BuildStubs/BuildStubs.csproj -c Release
+      - name: Build stubs
+        run: |
+          dotnet build BuildStubs/BuildStubs.csproj -c Release
+          dotnet build BuildStubs.ImageConversion/BuildStubs.ImageConversion.csproj -c Release
+          # Copy ImageConversion stub to same location as TMPro stub
+          cp BuildStubs.ImageConversion/bin/Release/net6.0/UnityEngine.ImageConversionModule.dll BuildStubs/bin/Release/net6.0/
 
       - name: Build mod
         run: |

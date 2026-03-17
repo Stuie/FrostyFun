@@ -2,6 +2,7 @@ using MelonLoader;
 using UnityEngine;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using Object = UnityEngine.Object;
 using Il2CppInterop.Runtime;
@@ -55,6 +56,7 @@ namespace CharacterSelect
         // Loaded character textures (indexed by position in Characters array)
         private Texture2D[] _characterTextures;
         private bool _texturesLoaded = false;
+        private Texture2D _placeholderTexture; // Fallback for characters without game icons
 
         private int _currentCharacterId = 1;
         private int _hoverCharacterId = -1;
@@ -572,26 +574,84 @@ namespace CharacterSelect
         {
             if (_texturesLoaded) return;
 
+            // Load placeholder from embedded resources
+            _placeholderTexture = LoadEmbeddedTexture("character_placeholder.png");
+            if (_placeholderTexture != null)
+            {
+                Melon<CharacterSelectMod>.Logger.Msg("Loaded custom placeholder icon from embedded resources");
+            }
+
             _characterTextures = new Texture2D[Characters.Length];
             var allTextures = Resources.FindObjectsOfTypeAll<Texture2D>();
 
             for (int i = 0; i < Characters.Length; i++)
             {
                 string iconName = Characters[i].IconName;
-                if (iconName == null) continue;
 
-                foreach (var tex in allTextures)
+                // First try to load from game assets
+                if (iconName != null)
                 {
-                    if (tex != null && tex.name == iconName)
+                    foreach (var tex in allTextures)
                     {
-                        _characterTextures[i] = tex;
-                        Melon<CharacterSelectMod>.Logger.Msg($"Loaded icon for {Characters[i].Name}: {iconName}");
-                        break;
+                        if (tex != null && tex.name == iconName)
+                        {
+                            _characterTextures[i] = tex;
+                            Melon<CharacterSelectMod>.Logger.Msg($"Loaded game icon for {Characters[i].Name}: {iconName}");
+                            break;
+                        }
                     }
+                }
+
+                // If no game icon found, use placeholder
+                if (_characterTextures[i] == null && _placeholderTexture != null)
+                {
+                    _characterTextures[i] = _placeholderTexture;
+                    Melon<CharacterSelectMod>.Logger.Msg($"Using placeholder for {Characters[i].Name}");
                 }
             }
 
             _texturesLoaded = true;
+        }
+
+        private Texture2D LoadEmbeddedTexture(string fileName)
+        {
+            try
+            {
+                var assembly = Assembly.GetExecutingAssembly();
+                var resourceName = $"CharacterSelect.Assets.{fileName}";
+
+                using (var stream = assembly.GetManifestResourceStream(resourceName))
+                {
+                    if (stream == null)
+                    {
+                        Melon<CharacterSelectMod>.Logger.Warning($"Embedded resource not found: {resourceName}");
+                        // List available resources for debugging
+                        var names = assembly.GetManifestResourceNames();
+                        Melon<CharacterSelectMod>.Logger.Msg($"Available resources: {string.Join(", ", names)}");
+                        return null;
+                    }
+
+                    byte[] data = new byte[stream.Length];
+                    stream.Read(data, 0, data.Length);
+
+                    // Create texture and load image data
+                    var texture = new Texture2D(2, 2);
+                    if (ImageConversion.LoadImage(texture, data))
+                    {
+                        return texture;
+                    }
+                    else
+                    {
+                        Melon<CharacterSelectMod>.Logger.Warning($"Failed to load image data from {fileName}");
+                        return null;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Melon<CharacterSelectMod>.Logger.Error($"Error loading embedded texture {fileName}: {ex.Message}");
+                return null;
+            }
         }
 
         private Texture2D MakeTexture(int width, int height, Color color)
