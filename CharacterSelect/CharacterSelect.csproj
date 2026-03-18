@@ -22,26 +22,8 @@
         <EmbeddedResource Include="Assets\*.png" />
     </ItemGroup>
 
-    <!-- CI Build: Use NuGet packages -->
-    <ItemGroup Condition="'$(CIBuild)' == 'true'">
-        <PackageReference Include="Il2CppInterop.Runtime" Version="1.4.5.0" />
-        <PackageReference Include="Il2CppInterop.Common" Version="1.4.5.0" />
-        <PackageReference Include="Unity3D.UnityEngine" Version="2018.3.5.1" />
-        <PackageReference Include="Unity3D.UnityEngine.UI" Version="2018.3.5.1" />
-        <!-- TMPro stub (no NuGet package exists) -->
-        <Reference Include="Unity.TextMeshPro">
-            <HintPath>$(StubsPath)\Unity.TextMeshPro.dll</HintPath>
-            <Private>false</Private>
-        </Reference>
-        <!-- Il2CppInterop stubs for extension methods not in NuGet -->
-        <Reference Include="Il2CppInterop.Stubs">
-            <HintPath>$(StubsPath)\Il2CppInterop.Stubs.dll</HintPath>
-            <Private>false</Private>
-        </Reference>
-    </ItemGroup>
-
-    <!-- Local Build: Use local MelonLoader assemblies -->
-    <ItemGroup Condition="'$(CIBuild)' != 'true'">
+    <!-- Reference local MelonLoader assemblies -->
+    <ItemGroup>
         <Reference Include="Il2CppInterop.Runtime">
             <HintPath>$(GamePath)\MelonLoader\net6\Il2CppInterop.Runtime.dll</HintPath>
             <Private>false</Private>
