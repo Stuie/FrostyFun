@@ -19,6 +19,14 @@ FrostyFun/
 │   ├── MenuQOLMod.cs
 │   └── Properties/
 │       └── AssemblyInfo.cs
+├── CharacterSelect/        # Quick character switching (F6 = UI)
+│   ├── CharacterSelect.csproj
+│   ├── CharacterSelectMod.cs
+│   └── Assets/
+├── YetiHunt/               # Battle Royale yeti hunting game mode (WIP)
+│   ├── YetiHunt.csproj     # F10=start, F11=yeti dump, F12=network dump
+│   ├── YetiHuntMod.cs
+│   └── IMPLEMENTATION_PLAN.md
 └── TestMod/                # MINIMAL TEST MOD - only verifies MelonLoader is working
     ├── TestMod.csproj      # No gameplay features, just logs to confirm mod loading
     ├── TestMod.cs
@@ -107,6 +115,12 @@ dotnet build MenuQOL/MenuQOL.csproj -c Release && cp 'MenuQOL/bin/Release/net6.0
 
 # TestMod
 dotnet build TestMod/TestMod.csproj -c Release && cp 'TestMod/bin/Release/net6.0/TestMod.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\'
+
+# CharacterSelect
+dotnet build CharacterSelect/CharacterSelect.csproj -c Release && cp 'CharacterSelect/bin/Release/net6.0/CharacterSelect.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\'
+
+# YetiHunt
+dotnet build YetiHunt/YetiHunt.csproj -c Release && cp 'YetiHunt/bin/Release/net6.0/YetiHunt.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\'
 ```
 
 ### Verify
