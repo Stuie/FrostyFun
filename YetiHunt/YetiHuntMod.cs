@@ -45,20 +45,25 @@ namespace YetiHunt
         private Type _yetiManagerType = null;
         private Type _yetiType = null;
         private Type _chatManagerType = null;
+        private Type _playerControlType = null;
+        private Type _playerTeleportControllerType = null;
+        private Type _snowballType = null;
         private object _yetiManagerInstance = null;
         private MethodInfo _spawnYetiMethod = null;
+        private PropertyInfo _teleportControllerProperty = null;
+        private MethodInfo _teleportPlayerMethod = null;
         private bool _typesInitialized = false;
 
         // UI
         private Texture2D _bgTexture;
+        private Texture2D _winnerBgTexture;
         private bool _texturesInitialized = false;
+        private string _lastWinnerName = null;
 
         // Player tracking
         private Transform _playerTransform = null;
 
-        // Snowball tracking for hit detection
-        private Dictionary<int, Vector3> _trackedSnowballs = new Dictionary<int, Vector3>();
-        private const float SNOWBALL_HIT_RADIUS = 5f; // Direct hit radius
+        // Snowball hit detection
         private HashSet<int> _hitSnowballs = new HashSet<int>(); // Avoid double-counting hits
         private float _lastDebugLogTime = 0f;
 
@@ -74,6 +79,9 @@ namespace YetiHunt
             Melon<YetiHuntMod>.Logger.Msg("YetiHunt loaded!");
             Melon<YetiHuntMod>.Logger.Msg("  F10 - Start/stop round");
             Melon<YetiHuntMod>.Logger.Msg("  F11 - Spawn yeti near player");
+            Melon<YetiHuntMod>.Logger.Msg("  F9  - Dump teleport/spawn related types and UI");
+            Melon<YetiHuntMod>.Logger.Msg("  F8  - Test teleport to random sky position");
+            Melon<YetiHuntMod>.Logger.Msg("  F7  - Dump Snowball class info");
             Melon<YetiHuntMod>.Logger.Msg("  F4  - Dump snowball/player hit info");
             Melon<YetiHuntMod>.Logger.Msg("  F3  - Dump Yeti class info");
             Melon<YetiHuntMod>.Logger.Msg("  F2  - Dump all yeti animator state");
@@ -149,6 +157,23 @@ namespace YetiHunt
                         _chatManagerType = type;
                         Melon<YetiHuntMod>.Logger.Msg("Found ChatManager type");
                     }
+                    else if (type.Name == "PlayerControl" && type.Namespace == "Il2Cpp")
+                    {
+                        _playerControlType = type;
+                        _teleportControllerProperty = type.GetProperty("teleportationController");
+                        Melon<YetiHuntMod>.Logger.Msg($"Found PlayerControl, teleportationController: {_teleportControllerProperty != null}");
+                    }
+                    else if (type.Name == "PlayerTeleportationController")
+                    {
+                        _playerTeleportControllerType = type;
+                        _teleportPlayerMethod = type.GetMethod("TeleportPlayer");
+                        Melon<YetiHuntMod>.Logger.Msg($"Found PlayerTeleportationController, TeleportPlayer: {_teleportPlayerMethod != null}");
+                    }
+                    else if (type.Name == "Snowball" && type.Namespace == "Il2Cpp")
+                    {
+                        _snowballType = type;
+                        Melon<YetiHuntMod>.Logger.Msg("Found Snowball type");
+                    }
                 }
             }
             catch (Exception ex)
@@ -185,6 +210,22 @@ namespace YetiHunt
             if (Input.GetKeyDown(KeyCode.F2))
             {
                 DumpAllYetiAnimatorState();
+            }
+
+            if (Input.GetKeyDown(KeyCode.F9))
+            {
+                DumpTeleportationInfo();
+            }
+
+            if (Input.GetKeyDown(KeyCode.F8))
+            {
+                Melon<YetiHuntMod>.Logger.Msg("=== Testing Teleport ===");
+                TeleportPlayerToSky();
+            }
+
+            if (Input.GetKeyDown(KeyCode.F7))
+            {
+                DumpSnowballClassInfo();
             }
 
             // Collider debug controls (keeping for fine-tuning)
@@ -273,9 +314,9 @@ namespace YetiHunt
         {
             Melon<YetiHuntMod>.Logger.Msg("=== ROUND STOPPED ===");
             _currentState = GameState.Idle;
-            _huntYetis.Clear();
+            _lastWinnerName = null;
+            DespawnHuntYetis();
             _hitSnowballs.Clear();
-            _trackedSnowballs.Clear();
         }
 
         private void TransitionToHunting()
@@ -293,9 +334,77 @@ namespace YetiHunt
 
         private void TeleportPlayerToSky()
         {
-            // TODO: Player teleportation disabled for now - causes lag due to reflection
-            // Need to cache types at initialization or find a simpler approach
-            Melon<YetiHuntMod>.Logger.Msg("Player teleportation not yet implemented - hunt from current position");
+            if (_playerTransform == null)
+            {
+                Melon<YetiHuntMod>.Logger.Warning("No player to teleport");
+                return;
+            }
+
+            if (_playerControlType == null || _teleportControllerProperty == null || _teleportPlayerMethod == null)
+            {
+                Melon<YetiHuntMod>.Logger.Warning("Teleportation types not initialized");
+                return;
+            }
+
+            try
+            {
+                // Get PlayerControl component
+                var playerObj = _playerTransform.gameObject;
+                var components = playerObj.GetComponents<Component>();
+                object playerControl = null;
+
+                foreach (var comp in components)
+                {
+                    if (comp == null) continue;
+                    try
+                    {
+                        var il2cppType = comp.GetIl2CppType();
+                        if (il2cppType?.Name == "PlayerControl")
+                        {
+                            var castMethod = typeof(Il2CppObjectBase).GetMethod("Cast").MakeGenericMethod(_playerControlType);
+                            playerControl = castMethod.Invoke(comp, null);
+                            break;
+                        }
+                    }
+                    catch { }
+                }
+
+                if (playerControl == null)
+                {
+                    Melon<YetiHuntMod>.Logger.Warning("Could not find PlayerControl component");
+                    return;
+                }
+
+                // Get the teleportation controller
+                var teleportController = _teleportControllerProperty.GetValue(playerControl);
+                if (teleportController == null)
+                {
+                    Melon<YetiHuntMod>.Logger.Warning("teleportationController is null");
+                    return;
+                }
+
+                // Generate random position - spread across the map
+                // Map is a mountain so height varies significantly
+                // Spawn very high to avoid terrain, player will fall down
+                float angle = UnityEngine.Random.Range(0f, 360f) * Mathf.Deg2Rad;
+                float distance = UnityEngine.Random.Range(100f, 400f);
+                Vector3 center = new Vector3(300f, 0f, 400f); // Approximate map center
+                Vector3 targetPos = center + new Vector3(
+                    Mathf.Cos(angle) * distance,
+                    500f, // Very high to clear mountain peaks
+                    Mathf.Sin(angle) * distance
+                );
+
+                // Face toward center
+                Quaternion rotation = Quaternion.LookRotation((center - targetPos).normalized);
+
+                Melon<YetiHuntMod>.Logger.Msg($"Teleporting player to {targetPos}");
+                _teleportPlayerMethod.Invoke(teleportController, new object[] { targetPos, rotation });
+            }
+            catch (Exception ex)
+            {
+                Melon<YetiHuntMod>.Logger.Error($"Teleport failed: {ex.Message}");
+            }
         }
 
         private void TransitionToRoundEnd(string winnerName)
@@ -305,6 +414,7 @@ namespace YetiHunt
             else
                 Melon<YetiHuntMod>.Logger.Msg("=== NO WINNER ===");
 
+            _lastWinnerName = winnerName;
             _currentState = GameState.RoundEnd;
             _stateStartTime = Time.time;
         }
@@ -313,6 +423,22 @@ namespace YetiHunt
         {
             Melon<YetiHuntMod>.Logger.Msg("=== ROUND COMPLETE ===");
             _currentState = GameState.Idle;
+            _lastWinnerName = null;
+            DespawnHuntYetis();
+            _hitSnowballs.Clear();
+        }
+
+        private void DespawnHuntYetis()
+        {
+            foreach (var yeti in _huntYetis)
+            {
+                if (yeti.GameObject != null)
+                {
+                    Melon<YetiHuntMod>.Logger.Msg($"Despawning yeti at {yeti.GameObject.transform.position}");
+                    Object.Destroy(yeti.GameObject);
+                }
+            }
+            _huntYetis.Clear();
         }
 
         #endregion
@@ -819,6 +945,198 @@ namespace YetiHunt
 
         #endregion
 
+        #region Teleportation Investigation
+
+        private void DumpTeleportationInfo()
+        {
+            Melon<YetiHuntMod>.Logger.Msg("=== TELEPORTATION INFO DUMP ===");
+
+            // Search for teleport/spawn related types in Assembly-CSharp
+            Melon<YetiHuntMod>.Logger.Msg("--- Types containing teleport/spawn/lodge/warp ---");
+            try
+            {
+                var assembly = Assembly.Load("Assembly-CSharp");
+                var keywords = new[] { "teleport", "spawn", "lodge", "warp", "respawn", "checkpoint", "flag" };
+
+                foreach (var type in assembly.GetTypes())
+                {
+                    string typeLower = type.Name.ToLower();
+                    bool matches = keywords.Any(k => typeLower.Contains(k));
+
+                    if (matches)
+                    {
+                        Melon<YetiHuntMod>.Logger.Msg($"  {type.Namespace}.{type.Name}");
+
+                        // List methods
+                        foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly))
+                        {
+                            if (method.Name.StartsWith("get_") || method.Name.StartsWith("set_")) continue;
+                            var parms = string.Join(", ", method.GetParameters().Select(p => p.ParameterType.Name));
+                            Melon<YetiHuntMod>.Logger.Msg($"    .{method.Name}({parms})");
+                        }
+
+                        // List properties
+                        foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                        {
+                            Melon<YetiHuntMod>.Logger.Msg($"    [{prop.PropertyType.Name}] {prop.Name}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Melon<YetiHuntMod>.Logger.Error($"Assembly search failed: {ex.Message}");
+            }
+
+            // Search for GameObjects with teleport/lodge/spawn in name
+            Melon<YetiHuntMod>.Logger.Msg("--- GameObjects containing teleport/lodge/spawn ---");
+            var goKeywords = new[] { "teleport", "lodge", "spawn", "checkpoint", "flag", "respawn" };
+            foreach (var obj in Object.FindObjectsOfType<GameObject>())
+            {
+                if (obj == null) continue;
+                string nameLower = obj.name.ToLower();
+                if (goKeywords.Any(k => nameLower.Contains(k)))
+                {
+                    Melon<YetiHuntMod>.Logger.Msg($"  {obj.name} at {obj.transform.position}");
+
+                    // List components
+                    var components = obj.GetComponents<Component>();
+                    foreach (var comp in components)
+                    {
+                        if (comp == null) continue;
+                        string typeName = GetComponentTypeName(comp);
+                        Melon<YetiHuntMod>.Logger.Msg($"    - {typeName}");
+                    }
+                }
+            }
+
+            // Search for UI buttons with relevant text
+            Melon<YetiHuntMod>.Logger.Msg("--- UI Buttons (searching for teleport/lodge) ---");
+            try
+            {
+                // Find all Button components
+                var buttonType = typeof(UnityEngine.UI.Button);
+                var buttons = Object.FindObjectsOfType(Il2CppType.From(buttonType));
+
+                foreach (var btnObj in buttons)
+                {
+                    var btn = btnObj.TryCast<UnityEngine.UI.Button>();
+                    if (btn == null) continue;
+
+                    string btnName = btn.gameObject.name.ToLower();
+
+                    // Check if button or parent has lodge/teleport in name
+                    bool relevant = btnName.Contains("lodge") || btnName.Contains("teleport") ||
+                                   btnName.Contains("spawn") || btnName.Contains("menu");
+
+                    // Also check for TMP text children
+                    var tmpTexts = btn.GetComponentsInChildren<Component>();
+                    string buttonText = "";
+                    foreach (var comp in tmpTexts)
+                    {
+                        if (comp == null) continue;
+                        var il2cppType = comp.GetIl2CppType();
+                        if (il2cppType?.Name == "TMP_Text" || il2cppType?.Name == "TextMeshProUGUI")
+                        {
+                            // Try to get text property
+                            var textProp = comp.GetType().GetProperty("text");
+                            if (textProp != null)
+                            {
+                                buttonText = textProp.GetValue(comp)?.ToString() ?? "";
+                                if (buttonText.ToLower().Contains("lodge") ||
+                                    buttonText.ToLower().Contains("teleport"))
+                                {
+                                    relevant = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if (relevant || btn.gameObject.activeInHierarchy)
+                    {
+                        Melon<YetiHuntMod>.Logger.Msg($"  Button: {btn.gameObject.name}");
+                        if (!string.IsNullOrEmpty(buttonText))
+                            Melon<YetiHuntMod>.Logger.Msg($"    Text: {buttonText}");
+                        Melon<YetiHuntMod>.Logger.Msg($"    Active: {btn.gameObject.activeInHierarchy}");
+
+                        // Show onClick listener count
+                        Melon<YetiHuntMod>.Logger.Msg($"    onClick listeners: {btn.onClick.GetPersistentEventCount()}");
+
+                        // Try to get persistent call info
+                        for (int i = 0; i < btn.onClick.GetPersistentEventCount(); i++)
+                        {
+                            var target = btn.onClick.GetPersistentTarget(i);
+                            var method = btn.onClick.GetPersistentMethodName(i);
+                            Melon<YetiHuntMod>.Logger.Msg($"      -> {target?.GetType().Name ?? "null"}.{method}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Melon<YetiHuntMod>.Logger.Warning($"Button search failed: {ex.Message}");
+            }
+
+            // Look at PlayerControl or similar player management classes
+            Melon<YetiHuntMod>.Logger.Msg("--- Player-related types with position/teleport methods ---");
+            try
+            {
+                var assembly = Assembly.Load("Assembly-CSharp");
+                var playerKeywords = new[] { "player", "character", "avatar", "pawn" };
+
+                foreach (var type in assembly.GetTypes())
+                {
+                    string typeLower = type.Name.ToLower();
+                    if (!playerKeywords.Any(k => typeLower.Contains(k))) continue;
+
+                    // Look for teleport/position/spawn methods
+                    var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+                    var relevantMethods = methods.Where(m =>
+                        m.Name.ToLower().Contains("teleport") ||
+                        m.Name.ToLower().Contains("spawn") ||
+                        m.Name.ToLower().Contains("setposition") ||
+                        m.Name.ToLower().Contains("warp") ||
+                        m.Name.ToLower().Contains("respawn") ||
+                        m.Name.ToLower().Contains("move") && m.Name.ToLower().Contains("to")
+                    ).ToList();
+
+                    if (relevantMethods.Count > 0)
+                    {
+                        Melon<YetiHuntMod>.Logger.Msg($"  {type.Namespace}.{type.Name}");
+                        foreach (var m in relevantMethods)
+                        {
+                            var parms = string.Join(", ", m.GetParameters().Select(p => $"{p.ParameterType.Name} {p.Name}"));
+                            Melon<YetiHuntMod>.Logger.Msg($"    .{m.Name}({parms})");
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // Check for SpawnManager or similar
+            Melon<YetiHuntMod>.Logger.Msg("--- Manager singletons (spawn/game/level) ---");
+            var managerNames = new[] { "SpawnManager", "GameManager", "LevelManager", "PlayerManager", "NetworkManager" };
+            foreach (var mgrName in managerNames)
+            {
+                var obj = GameObject.Find(mgrName);
+                if (obj != null)
+                {
+                    Melon<YetiHuntMod>.Logger.Msg($"  Found: {mgrName}");
+                    var components = obj.GetComponents<Component>();
+                    foreach (var comp in components)
+                    {
+                        if (comp == null) continue;
+                        string typeName = GetComponentTypeName(comp);
+                        Melon<YetiHuntMod>.Logger.Msg($"    - {typeName}");
+                    }
+                }
+            }
+
+            Melon<YetiHuntMod>.Logger.Msg("=== END TELEPORTATION DUMP ===");
+        }
+
+        #endregion
+
         #region Snowball Investigation
 
         private void DumpSnowballAndPlayerInfo()
@@ -1070,6 +1388,85 @@ namespace YetiHunt
             Melon<YetiHuntMod>.Logger.Msg("=== END YETI CLASS INFO ===");
         }
 
+        private void DumpSnowballClassInfo()
+        {
+            Melon<YetiHuntMod>.Logger.Msg("=== SNOWBALL CLASS INFO ===");
+
+            if (_snowballType == null)
+            {
+                Melon<YetiHuntMod>.Logger.Warning("Snowball type not found");
+                return;
+            }
+
+            // Dump fields
+            Melon<YetiHuntMod>.Logger.Msg("--- Fields ---");
+            foreach (var field in _snowballType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                Melon<YetiHuntMod>.Logger.Msg($"  {field.FieldType.Name} {field.Name}");
+            }
+
+            // Dump properties
+            Melon<YetiHuntMod>.Logger.Msg("--- Properties ---");
+            foreach (var prop in _snowballType.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                string access = (prop.CanRead ? "get" : "") + (prop.CanWrite ? "/set" : "");
+                Melon<YetiHuntMod>.Logger.Msg($"  {prop.PropertyType.Name} {prop.Name} [{access}]");
+            }
+
+            // Dump methods (excluding property getters/setters)
+            Melon<YetiHuntMod>.Logger.Msg("--- Methods ---");
+            foreach (var method in _snowballType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+            {
+                if (method.Name.StartsWith("get_") || method.Name.StartsWith("set_")) continue;
+                var parameters = string.Join(", ", method.GetParameters().Select(p => $"{p.ParameterType.Name} {p.Name}"));
+                Melon<YetiHuntMod>.Logger.Msg($"  {method.ReturnType.Name} {method.Name}({parameters})");
+            }
+
+            // Also try to find any snowballs in scene and dump their runtime values
+            Melon<YetiHuntMod>.Logger.Msg("--- Live Snowballs ---");
+            foreach (var obj in Object.FindObjectsOfType<GameObject>())
+            {
+                if (obj == null || !obj.name.Contains("Snowball")) continue;
+
+                Melon<YetiHuntMod>.Logger.Msg($"  {obj.name} at {obj.transform.position}");
+
+                var components = obj.GetComponents<Component>();
+                foreach (var comp in components)
+                {
+                    if (comp == null) continue;
+                    try
+                    {
+                        var il2cppType = comp.GetIl2CppType();
+                        if (il2cppType?.Name == "Snowball")
+                        {
+                            var castMethod = typeof(Il2CppObjectBase).GetMethod("Cast").MakeGenericMethod(_snowballType);
+                            var snowball = castMethod.Invoke(comp, null);
+
+                            // Try to read owner-related properties
+                            var ownerProps = new[] { "owner", "thrower", "player", "playerControl", "networkConnection", "Owner", "Thrower", "Player" };
+                            foreach (var propName in ownerProps)
+                            {
+                                var prop = _snowballType.GetProperty(propName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.IgnoreCase);
+                                if (prop != null)
+                                {
+                                    try
+                                    {
+                                        var val = prop.GetValue(snowball);
+                                        Melon<YetiHuntMod>.Logger.Msg($"    {propName}: {val}");
+                                    }
+                                    catch { }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    catch { }
+                }
+            }
+
+            Melon<YetiHuntMod>.Logger.Msg("=== END SNOWBALL CLASS INFO ===");
+        }
+
         #endregion
 
         #region Snowball Hit Detection
@@ -1077,71 +1474,356 @@ namespace YetiHunt
         private void TrackSnowballsAndDetectHits()
         {
             if (_huntYetis.Count == 0) return;
+            if (_currentState != GameState.Hunting) return;
 
             // Periodic debug log
-            if (_currentState == GameState.Hunting && Time.time - _lastDebugLogTime > 3f)
+            if (Time.time - _lastDebugLogTime > 3f)
             {
                 _lastDebugLogTime = Time.time;
                 var yetiPos = _huntYetis.Count > 0 && _huntYetis[0].GameObject != null
                     ? _huntYetis[0].GameObject.transform.position.ToString() : "N/A";
-                Melon<YetiHuntMod>.Logger.Msg($"[Hit Debug] Tracking {_trackedSnowballs.Count} snowballs, yeti at {yetiPos}");
+                Melon<YetiHuntMod>.Logger.Msg($"[Hit Debug] Yeti at {yetiPos}");
             }
 
-            // Find all current snowballs
-            var currentSnowballs = new HashSet<int>();
-            foreach (var obj in Object.FindObjectsOfType<GameObject>())
+            // Use Physics.OverlapCapsule to find snowballs touching the yeti
+            foreach (var yeti in _huntYetis)
             {
-                if (obj != null && obj.name == "Snowball(Clone)")
+                if (yeti.GameObject == null) continue;
+
+                Vector3 yetiPos = yeti.GameObject.transform.position;
+                Vector3 capsuleCenter = yetiPos + new Vector3(0, _colliderYOffset, 0);
+
+                // Capsule endpoints (bottom and top of the capsule, excluding the hemisphere caps)
+                Vector3 point1 = capsuleCenter - new Vector3(0, (_colliderHeight / 2f) - _colliderRadius, 0);
+                Vector3 point2 = capsuleCenter + new Vector3(0, (_colliderHeight / 2f) - _colliderRadius, 0);
+
+                // Check for any colliders overlapping our yeti capsule
+                // Use a slightly larger radius to catch snowballs that are close
+                var hitColliders = Physics.OverlapCapsule(point1, point2, _colliderRadius + 0.5f);
+
+                foreach (var col in hitColliders)
                 {
-                    int id = obj.GetInstanceID();
-                    currentSnowballs.Add(id);
+                    if (col == null || col.gameObject == null) continue;
 
-                    // Track position for when it disappears
-                    _trackedSnowballs[id] = obj.transform.position;
-                }
-            }
-
-            // Check for snowballs that disappeared (hit something)
-            var disappeared = _trackedSnowballs.Keys.Where(id => !currentSnowballs.Contains(id)).ToList();
-
-            foreach (int snowballId in disappeared)
-            {
-                if (_hitSnowballs.Contains(snowballId)) continue;
-
-                Vector3 lastPos = _trackedSnowballs[snowballId];
-                _trackedSnowballs.Remove(snowballId);
-
-                // Check if it disappeared near a yeti (hit the collider)
-                foreach (var yeti in _huntYetis)
-                {
-                    if (yeti.GameObject == null) continue;
-
-                    Vector3 yetiCenter = yeti.GameObject.transform.position + new Vector3(0, _colliderHeight / 2f, 0);
-                    float dist = Vector3.Distance(lastPos, yetiCenter);
-
-                    if (dist < SNOWBALL_HIT_RADIUS)
+                    // Check if it's a snowball
+                    if (col.gameObject.name.Contains("Snowball"))
                     {
+                        int snowballId = col.gameObject.GetInstanceID();
+
+                        // Don't count the same snowball twice
+                        if (_hitSnowballs.Contains(snowballId)) continue;
+
                         _hitSnowballs.Add(snowballId);
-                        Melon<YetiHuntMod>.Logger.Msg($"*** YETI HIT! *** Snowball destroyed {dist:F1}m from yeti");
-                        OnYetiHit(yeti, lastPos);
-                        break;
+                        Vector3 hitPos = col.gameObject.transform.position;
+
+                        // Get the thrower info from the snowball
+                        string throwerName = GetSnowballThrowerName(col.gameObject);
+
+                        Melon<YetiHuntMod>.Logger.Msg($"*** YETI HIT! *** Snowball at {hitPos} hit yeti at {yetiPos}, thrown by: {throwerName}");
+                        OnYetiHit(yeti, hitPos, throwerName);
+                        return; // End round on first hit
                     }
                 }
             }
 
-            // Clean up old hit tracking
+            // Clean up old hit tracking periodically
             if (_hitSnowballs.Count > 100)
                 _hitSnowballs.Clear();
         }
 
-        private void OnYetiHit(HuntYeti yeti, Vector3 hitPosition)
+        private string GetSnowballThrowerName(GameObject snowballObj)
         {
-            Melon<YetiHuntMod>.Logger.Msg($"*** YETI HIT! *** at {hitPosition}");
+            if (_snowballType == null) return "Unknown";
 
-            // For now, just log it. Later: determine which player threw it, award points, etc.
+            try
+            {
+                var components = snowballObj.GetComponents<Component>();
+                foreach (var comp in components)
+                {
+                    if (comp == null) continue;
+                    try
+                    {
+                        var il2cppType = comp.GetIl2CppType();
+                        if (il2cppType?.Name == "Snowball")
+                        {
+                            var castMethod = typeof(Il2CppObjectBase).GetMethod("Cast").MakeGenericMethod(_snowballType);
+                            var snowball = castMethod.Invoke(comp, null);
+
+                            // Try sync_PlayerThatPickedUpObject first - this tracks who threw it
+                            var syncPlayerProp = _snowballType.GetProperty("sync_PlayerThatPickedUpObject");
+                            if (syncPlayerProp != null)
+                            {
+                                var syncVar = syncPlayerProp.GetValue(snowball);
+                                if (syncVar != null)
+                                {
+                                    // SyncVar<T> has a Value property
+                                    var valueProp = syncVar.GetType().GetProperty("Value");
+                                    if (valueProp != null)
+                                    {
+                                        var playerRef = valueProp.GetValue(syncVar);
+                                        Melon<YetiHuntMod>.Logger.Msg($"sync_PlayerThatPickedUpObject.Value: {playerRef}");
+
+                                        if (playerRef != null)
+                                        {
+                                            // This might be a PlayerControl or GameObject reference
+                                            // Try to get the player's username from it
+                                            string name = ExtractPlayerName(playerRef);
+                                            if (!string.IsNullOrEmpty(name) && name != "Unknown")
+                                                return name;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Try OwnerId
+                            var ownerIdProp = _snowballType.GetProperty("OwnerId");
+                            if (ownerIdProp != null)
+                            {
+                                int ownerId = (int)ownerIdProp.GetValue(snowball);
+                                Melon<YetiHuntMod>.Logger.Msg($"Snowball OwnerId: {ownerId}");
+
+                                if (ownerId >= 0)
+                                {
+                                    string playerName = FindPlayerNameByOwnerId(ownerId);
+                                    if (!string.IsNullOrEmpty(playerName) && !playerName.StartsWith("Player "))
+                                        return playerName;
+                                }
+                            }
+
+                            // Fallback: Check if this is the local player's snowball
+                            var isOwnerProp = _snowballType.GetProperty("IsOwner");
+                            if (isOwnerProp != null)
+                            {
+                                bool isOwner = (bool)isOwnerProp.GetValue(snowball);
+                                Melon<YetiHuntMod>.Logger.Msg($"Snowball IsOwner: {isOwner}");
+                                if (isOwner)
+                                {
+                                    // This is our snowball - get local player name
+                                    return GetLocalPlayerName();
+                                }
+                            }
+
+                            break;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Melon<YetiHuntMod>.Logger.Warning($"Error getting snowball owner: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Melon<YetiHuntMod>.Logger.Warning($"GetSnowballThrowerName failed: {ex.Message}");
+            }
+
+            // Last resort: if we're the only player, it must be us
+            return GetLocalPlayerName();
+        }
+
+        private string ExtractPlayerName(object playerRef)
+        {
+            if (playerRef == null) return "Unknown";
+
+            try
+            {
+                var type = playerRef.GetType();
+                Melon<YetiHuntMod>.Logger.Msg($"ExtractPlayerName from type: {type.Name}");
+
+                // If it's a PlayerControl, try to get the usernameController
+                var usernameControllerProp = type.GetProperty("usernameController");
+                if (usernameControllerProp != null)
+                {
+                    var usernameController = usernameControllerProp.GetValue(playerRef);
+                    Melon<YetiHuntMod>.Logger.Msg($"usernameController: {usernameController}");
+                    if (usernameController != null)
+                    {
+                        // Try various property names for the username
+                        var ucType = usernameController.GetType();
+                        var propNames = new[] { "username", "Username", "playerName", "PlayerName", "displayName", "sync_username", "sync_Username" };
+                        foreach (var propName in propNames)
+                        {
+                            var prop = ucType.GetProperty(propName);
+                            if (prop != null)
+                            {
+                                var val = prop.GetValue(usernameController);
+                                Melon<YetiHuntMod>.Logger.Msg($"  {propName}: {val}");
+
+                                // Handle SyncVar wrapper
+                                if (val != null && val.GetType().Name.Contains("SyncVar"))
+                                {
+                                    var valueProp = val.GetType().GetProperty("Value");
+                                    if (valueProp != null)
+                                    {
+                                        val = valueProp.GetValue(val);
+                                        Melon<YetiHuntMod>.Logger.Msg($"  {propName}.Value: {val}");
+                                    }
+                                }
+
+                                if (val != null && val is string strVal && !string.IsNullOrEmpty(strVal))
+                                {
+                                    return strVal;
+                                }
+                            }
+                        }
+
+                        // List all properties of usernameController for debugging
+                        Melon<YetiHuntMod>.Logger.Msg("PlayerUsernameController all properties:");
+                        foreach (var prop in ucType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                        {
+                            Melon<YetiHuntMod>.Logger.Msg($"  {prop.Name}: {prop.PropertyType.Name}");
+                        }
+                    }
+                }
+
+                // Try to get GameObject and find PlayerUsernameController
+                GameObject playerObj = null;
+                var gameObjectProp = type.GetProperty("gameObject");
+                if (gameObjectProp != null)
+                {
+                    playerObj = gameObjectProp.GetValue(playerRef) as GameObject;
+                }
+
+                if (playerObj == null)
+                {
+                    // Try casting to Component
+                    var castMethod = typeof(Il2CppObjectBase).GetMethod("TryCast");
+                    if (castMethod != null)
+                    {
+                        var componentCast = castMethod.MakeGenericMethod(typeof(Component));
+                        var asComponent = componentCast.Invoke(playerRef, null) as Component;
+                        if (asComponent != null)
+                        {
+                            playerObj = asComponent.gameObject;
+                        }
+                    }
+                }
+
+                if (playerObj != null)
+                {
+                    Melon<YetiHuntMod>.Logger.Msg($"Found player GameObject: {playerObj.name}");
+                    var username = GetPlayerUsername(playerObj);
+                    if (!string.IsNullOrEmpty(username))
+                        return username;
+                }
+
+                // List available properties for debugging
+                Melon<YetiHuntMod>.Logger.Msg("PlayerControl properties:");
+                foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    if (prop.Name.ToLower().Contains("name") || prop.Name.ToLower().Contains("user"))
+                    {
+                        Melon<YetiHuntMod>.Logger.Msg($"  {prop.Name}: {prop.PropertyType.Name}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Melon<YetiHuntMod>.Logger.Warning($"ExtractPlayerName error: {ex.Message}");
+            }
+
+            return "Unknown";
+        }
+
+        private string GetLocalPlayerName()
+        {
+            if (_playerTransform != null)
+            {
+                string name = GetPlayerUsername(_playerTransform.gameObject);
+                if (!string.IsNullOrEmpty(name))
+                    return name;
+            }
+            return "You";
+        }
+
+        private string FindPlayerNameByOwnerId(int ownerId)
+        {
+            // Search all players to find one with matching owner ID
+            foreach (var obj in Object.FindObjectsOfType<GameObject>())
+            {
+                if (obj == null || !obj.name.Contains("Player Networked")) continue;
+
+                var components = obj.GetComponents<Component>();
+                foreach (var comp in components)
+                {
+                    if (comp == null) continue;
+                    try
+                    {
+                        var il2cppType = comp.GetIl2CppType();
+                        // Look for NetworkObject component which has OwnerId
+                        if (il2cppType?.Name == "NetworkObject")
+                        {
+                            var ownerIdProp = comp.GetType().GetProperty("OwnerId");
+                            if (ownerIdProp != null)
+                            {
+                                int playerOwnerId = (int)ownerIdProp.GetValue(comp);
+                                if (playerOwnerId == ownerId)
+                                {
+                                    // Found the player! Now get their username
+                                    return GetPlayerUsername(obj);
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                }
+            }
+
+            return $"Player {ownerId}";
+        }
+
+        private string GetPlayerUsername(GameObject playerObj)
+        {
+            // Try to find PlayerUsernameController or similar
+            var components = playerObj.GetComponents<Component>();
+            foreach (var comp in components)
+            {
+                if (comp == null) continue;
+                try
+                {
+                    var il2cppType = comp.GetIl2CppType();
+                    if (il2cppType?.Name == "PlayerUsernameController")
+                    {
+                        // Try common property names for username
+                        var type = comp.GetType();
+                        var props = new[] { "username", "Username", "playerName", "PlayerName", "displayName", "DisplayName" };
+                        foreach (var propName in props)
+                        {
+                            var prop = type.GetProperty(propName, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+                            if (prop != null)
+                            {
+                                var val = prop.GetValue(comp);
+                                if (val != null)
+                                    return val.ToString();
+                            }
+                        }
+
+                        // Try fields
+                        var fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                        foreach (var field in fields)
+                        {
+                            if (field.Name.ToLower().Contains("name") || field.Name.ToLower().Contains("user"))
+                            {
+                                var val = field.GetValue(comp);
+                                if (val != null && val is string strVal && !string.IsNullOrEmpty(strVal))
+                                    return strVal;
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            return null;
+        }
+
+        private void OnYetiHit(HuntYeti yeti, Vector3 hitPosition, string throwerName)
+        {
+            Melon<YetiHuntMod>.Logger.Msg($"*** YETI HIT! *** at {hitPosition} by {throwerName}");
+
             if (_currentState == GameState.Hunting)
             {
-                TransitionToRoundEnd("Player"); // TODO: track actual player name
+                TransitionToRoundEnd(throwerName);
             }
         }
 
@@ -1237,6 +1919,7 @@ namespace YetiHunt
         {
             if (_texturesInitialized) return;
             _bgTexture = MakeTexture(2, 2, new Color(0.1f, 0.1f, 0.15f, 0.8f));
+            _winnerBgTexture = MakeTexture(2, 2, new Color(0.1f, 0.3f, 0.1f, 0.9f)); // Green for victory
             _texturesInitialized = true;
         }
 
@@ -1259,6 +1942,7 @@ namespace YetiHunt
             float barX = (Screen.width - barWidth) / 2;
             float barY = 20;
 
+            // Draw main status bar
             GUI.DrawTexture(new Rect(barX, barY, barWidth, barHeight), _bgTexture);
 
             GUIStyle labelStyle = new GUIStyle(GUI.skin.label);
@@ -1275,6 +1959,40 @@ namespace YetiHunt
             };
 
             GUI.Label(new Rect(barX, barY, barWidth, barHeight), statusText, labelStyle);
+
+            // Draw winner announcement during RoundEnd
+            if (_currentState == GameState.RoundEnd)
+            {
+                float winnerWidth = 500;
+                float winnerHeight = 120;
+                float winnerX = (Screen.width - winnerWidth) / 2;
+                float winnerY = (Screen.height - winnerHeight) / 2 - 50; // Slightly above center
+
+                GUI.DrawTexture(new Rect(winnerX, winnerY, winnerWidth, winnerHeight), _winnerBgTexture);
+
+                GUIStyle winnerTitleStyle = new GUIStyle(GUI.skin.label);
+                winnerTitleStyle.alignment = TextAnchor.MiddleCenter;
+                winnerTitleStyle.fontSize = 28;
+                winnerTitleStyle.fontStyle = FontStyle.Bold;
+                winnerTitleStyle.normal.textColor = Color.yellow;
+
+                GUIStyle winnerNameStyle = new GUIStyle(GUI.skin.label);
+                winnerNameStyle.alignment = TextAnchor.MiddleCenter;
+                winnerNameStyle.fontSize = 36;
+                winnerNameStyle.fontStyle = FontStyle.Bold;
+                winnerNameStyle.normal.textColor = Color.white;
+
+                if (!string.IsNullOrEmpty(_lastWinnerName))
+                {
+                    GUI.Label(new Rect(winnerX, winnerY + 10, winnerWidth, 40), "WINNER!", winnerTitleStyle);
+                    GUI.Label(new Rect(winnerX, winnerY + 55, winnerWidth, 50), _lastWinnerName, winnerNameStyle);
+                }
+                else
+                {
+                    GUI.Label(new Rect(winnerX, winnerY + 10, winnerWidth, 40), "TIME'S UP!", winnerTitleStyle);
+                    GUI.Label(new Rect(winnerX, winnerY + 55, winnerWidth, 50), "No one caught the Yeti!", winnerNameStyle);
+                }
+            }
         }
 
         #endregion

@@ -142,11 +142,11 @@ namespace CharacterSelect
                 CloseUI();
             }
 
-            // F8 = dump character assets and input state (for debugging)
-            if (Input.GetKeyDown(KeyCode.F8))
-            {
-                DumpCharacterAssets();
-            }
+            // F8 debug disabled - conflicts with YetiHunt teleport
+            // if (Input.GetKeyDown(KeyCode.F8))
+            // {
+            //     DumpCharacterAssets();
+            // }
 
             // Detect player spawn/despawn
             var playerObj = GameObject.Find("Player Networked(Clone)");
