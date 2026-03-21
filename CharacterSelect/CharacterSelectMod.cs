@@ -53,6 +53,20 @@ namespace CharacterSelect
             ("Panda", 16, null),
         };
 
+        // Custom embedded icons for characters without game icons (keyed by GameId)
+        private static readonly Dictionary<int, string> CustomIcons = new()
+        {
+            { 3, "harbor_seal.png" },      // Harbor Seal
+            { 6, "polar_bear.png" },       // Polar Bear
+            { 7, "black_bear.png" },       // Black Bear
+            { 8, "ringed_seal.png" },      // Ringed Seal
+            { 10, "strawberry_frog.png" }, // Strawberry Frog
+            { 11, "tree_frog.png" },       // Tree Frog
+            { 13, "brown_toad.png" },      // Brown Toad
+            { 15, "arctic_fox.png" },      // Arctic Fox
+            { 16, "panda.png" },           // Panda
+        };
+
         // Loaded character textures (indexed by position in Characters array)
         private Texture2D[] _characterTextures;
         private bool _texturesLoaded = false;
@@ -602,7 +616,17 @@ namespace CharacterSelect
                     }
                 }
 
-                // If no game icon found, use placeholder
+                // If no game icon found, try custom embedded icon
+                if (_characterTextures[i] == null && CustomIcons.TryGetValue(Characters[i].GameId, out var customFile))
+                {
+                    _characterTextures[i] = LoadEmbeddedTexture(customFile);
+                    if (_characterTextures[i] != null)
+                    {
+                        Melon<CharacterSelectMod>.Logger.Msg($"Loaded custom icon for {Characters[i].Name}: {customFile}");
+                    }
+                }
+
+                // Still nothing? Use placeholder
                 if (_characterTextures[i] == null && _placeholderTexture != null)
                 {
                     _characterTextures[i] = _placeholderTexture;
