@@ -7,6 +7,7 @@ namespace YetiHunt.UI
     /// </summary>
     public interface IMinimapRenderer
     {
+        bool Visible { get; set; }
         void Initialize();
         void Draw();
         Vector2 WorldToMapCoordinates(Vector3 worldPos);

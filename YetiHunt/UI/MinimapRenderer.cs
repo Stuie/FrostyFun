@@ -8,14 +8,17 @@ namespace YetiHunt.UI
 {
     /// <summary>
     /// Renders the minimap with player position and yeti region indicator.
+    /// The game map is rotated ~48° relative to Unity world axes, so we project
+    /// world coordinates onto the map's own east/north axes derived from two
+    /// calibrated corner points on the south edge of the map.
     /// </summary>
     public class MinimapRenderer : IMinimapRenderer
     {
         private const float YETI_REGION_RADIUS = 50f;
 
-        // Calibrated values based on spawn point mapping
-        private static readonly Vector2 DEFAULT_MAP_BOUNDS = new Vector2(500f, 262f);
-        private static readonly Vector3 DEFAULT_MAP_CENTER = new Vector3(26.5f, 200f, 206.4f);
+        // Two known corners on the south edge of the in-game map (world X, Z)
+        private static readonly Vector3 SW_CORNER = new Vector3(-1062.69f, 0f, 557.69f);
+        private static readonly Vector3 SE_CORNER = new Vector3(272.82f, 0f, -926.87f);
 
         private readonly IModLogger _logger;
         private readonly TextureFactory _textureFactory;
@@ -27,11 +30,23 @@ namespace YetiHunt.UI
         private Texture2D _yetiRegionTexture;
         private Texture2D _bgTexture;
 
-        private Vector2 _mapBounds;
-        private Vector3 _mapCenter;
+        // Map projection axes (computed from corners + image aspect ratio)
+        private Vector2 _eastDir;   // unit vector: map-east in world XZ
+        private Vector2 _northDir;  // unit vector: map-north in world XZ
+        private float _eastExtent;  // world-space length of south edge
+        private float _northExtent; // world-space length of west edge (derived from aspect ratio)
+        private Vector2 _origin;    // world XZ of the SW corner (bottom-left of image)
+
         private float _minimapWidth = 250f;
-        private float _minimapHeight = 180f;
+        private float _minimapHeight = 360f;
         private bool _initialized;
+        private bool _visible = false;
+
+        public bool Visible
+        {
+            get => _visible;
+            set => _visible = value;
+        }
 
         public MinimapRenderer(IModLogger logger, TextureFactory textureFactory, IPlayerTracker playerTracker, IYetiManager yetiManager)
         {
@@ -54,13 +69,13 @@ namespace YetiHunt.UI
 
                 // Load map texture
                 _minimapTexture = _textureFactory.LoadEmbeddedTexture("map.png");
+                float imageAspect;
                 if (_minimapTexture != null)
                 {
                     _logger.Info($"Loaded minimap texture: {_minimapTexture.width}x{_minimapTexture.height}");
-
-                    float aspectRatio = (float)_minimapTexture.width / _minimapTexture.height;
-                    _minimapHeight = 180f;
-                    _minimapWidth = _minimapHeight * aspectRatio;
+                    imageAspect = (float)_minimapTexture.width / _minimapTexture.height;
+                    _minimapHeight = 360f;
+                    _minimapWidth = _minimapHeight * imageAspect;
                     _logger.Info($"Minimap display size: {_minimapWidth}x{_minimapHeight}");
                 }
                 else
@@ -68,13 +83,12 @@ namespace YetiHunt.UI
                     _logger.Warning("Could not load map.png, using placeholder");
                     _minimapTexture = _textureFactory.MakeTexture(256, 180, new Color(0.2f, 0.3f, 0.2f, 0.8f));
                     _minimapWidth = 256f;
-                    _minimapHeight = 180f;
+                    _minimapHeight = 360f;
+                    imageAspect = 256f / 360f;
                 }
 
-                // Try to get bounds from game, fall back to calibrated values
-                _mapBounds = GetMapBoundsFromGame() ?? DEFAULT_MAP_BOUNDS;
-                _mapCenter = DEFAULT_MAP_CENTER;
-                _logger.Info($"Using map bounds: {_mapBounds}, center: {_mapCenter}");
+                // Compute rotated map projection from the two known south-edge corners
+                ComputeMapProjection(imageAspect);
 
                 _initialized = true;
             }
@@ -84,15 +98,45 @@ namespace YetiHunt.UI
                 _minimapTexture = _textureFactory.MakeTexture(256, 180, new Color(0.2f, 0.3f, 0.2f, 0.8f));
                 _minimapWidth = 256f;
                 _minimapHeight = 180f;
-                _mapBounds = DEFAULT_MAP_BOUNDS;
-                _mapCenter = DEFAULT_MAP_CENTER;
+                ComputeMapProjection(256f / 360f);
                 _initialized = true;
             }
         }
 
+        private void ComputeMapProjection(float imageAspectRatio)
+        {
+            // East direction: SW -> SE along the south edge of the map
+            Vector2 sw = new Vector2(SW_CORNER.x, SW_CORNER.z);
+            Vector2 se = new Vector2(SE_CORNER.x, SE_CORNER.z);
+            Vector2 eastVec = se - sw;
+
+            _eastExtent = eastVec.magnitude;
+            _eastDir = eastVec / _eastExtent;
+
+            // North is perpendicular to east, rotated 90° CCW in XZ plane
+            _northDir = new Vector2(-_eastDir.y, _eastDir.x);
+
+            // Derive north-south extent from image aspect ratio (uniform scale assumption)
+            _northExtent = _eastExtent / imageAspectRatio;
+
+            // Origin is the SW corner (bottom-left of image)
+            _origin = sw;
+
+            _logger.Info($"Map projection: east=({_eastDir.x:F3}, {_eastDir.y:F3}), north=({_northDir.x:F3}, {_northDir.y:F3})");
+            _logger.Info($"Map extents: east={_eastExtent:F1}, north={_northExtent:F1}");
+            _logger.Info($"Map origin (SW): ({_origin.x:F1}, {_origin.y:F1})");
+        }
+
         public void Draw()
         {
-            if (_minimapTexture == null) return;
+            // Il2Cpp textures can get destroyed on scene change; reinitialize if needed
+            if (_initialized && _minimapTexture == null)
+                _initialized = false;
+
+            if (!_initialized)
+                Initialize();
+
+            if (!_visible || _minimapTexture == null) return;
 
             float padding = 20f;
             float minimapX = Screen.width - _minimapWidth - padding;
@@ -117,7 +161,7 @@ namespace YetiHunt.UI
                 yetiMapPos.x += wobble;
                 yetiMapPos.y += wobble2;
 
-                float regionSize = _minimapWidth * (YETI_REGION_RADIUS / _mapBounds.x) * 2f;
+                float regionSize = _minimapWidth * (YETI_REGION_RADIUS / _eastExtent) * 2f;
                 regionSize = Mathf.Max(regionSize, 40f);
                 GUI.DrawTexture(new Rect(yetiMapPos.x - regionSize / 2, yetiMapPos.y - regionSize / 2, regionSize, regionSize), _yetiRegionTexture);
             }
@@ -141,68 +185,37 @@ namespace YetiHunt.UI
             GUI.Label(new Rect(minimapX, minimapY + _minimapHeight + 2, _minimapWidth, 16), "MINIMAP", minimapLabel);
         }
 
+        /// <summary>
+        /// Projects a world position onto the rotated map axes and returns
+        /// normalized coordinates (0-1) where (0,0) = SW and (1,1) = NE.
+        /// </summary>
+        private Vector2 WorldToNormalized(Vector3 worldPos)
+        {
+            Vector2 worldXZ = new Vector2(worldPos.x, worldPos.z);
+            Vector2 offset = worldXZ - _origin;
+
+            // Dot product with map axes to get projection distances
+            float eastProj = offset.x * _eastDir.x + offset.y * _eastDir.y;
+            float northProj = offset.x * _northDir.x + offset.y * _northDir.y;
+
+            float normX = Mathf.Clamp01(eastProj / _eastExtent);
+            float normY = Mathf.Clamp01(northProj / _northExtent);
+
+            return new Vector2(normX, normY);
+        }
+
         public Vector2 WorldToMapCoordinates(Vector3 worldPos)
         {
-            float relX = worldPos.x - _mapCenter.x;
-            float relZ = worldPos.z - _mapCenter.z;
-
-            float normX = (relX / _mapBounds.x) + 0.5f;
-            float normZ = (relZ / _mapBounds.y) + 0.5f;
-
-            normX = Mathf.Clamp01(normX);
-            normZ = Mathf.Clamp01(normZ);
-
-            return new Vector2(normX * _minimapWidth, (1f - normZ) * _minimapHeight);
+            Vector2 norm = WorldToNormalized(worldPos);
+            return new Vector2(norm.x * _minimapWidth, (1f - norm.y) * _minimapHeight);
         }
 
         private Vector2 WorldToMinimapPos(Vector3 worldPos, float minimapX, float minimapY)
         {
-            float relX = worldPos.x - _mapCenter.x;
-            float relZ = worldPos.z - _mapCenter.z;
-
-            float normX = (relX / _mapBounds.x) + 0.5f;
-            float normZ = (relZ / _mapBounds.y) + 0.5f;
-
-            normX = Mathf.Clamp01(normX);
-            normZ = Mathf.Clamp01(normZ);
-
-            float mapX = minimapX + normX * _minimapWidth;
-            float mapY = minimapY + (1f - normZ) * _minimapHeight;
-
+            Vector2 norm = WorldToNormalized(worldPos);
+            float mapX = minimapX + norm.x * _minimapWidth;
+            float mapY = minimapY + (1f - norm.y) * _minimapHeight;
             return new Vector2(mapX, mapY);
-        }
-
-        private Vector2? GetMapBoundsFromGame()
-        {
-            try
-            {
-                var mapSizeHandler = GameObject.Find("Map Size Handler");
-                if (mapSizeHandler != null)
-                {
-                    var components = mapSizeHandler.GetComponents<Component>();
-                    foreach (var comp in components)
-                    {
-                        if (comp == null) continue;
-                        var il2cppType = comp.GetIl2CppType();
-                        if (il2cppType?.Name == "MapSizeHandler")
-                        {
-                            var boundsProp = comp.GetType().GetProperty("mapBounds");
-                            if (boundsProp != null)
-                            {
-                                var boundsVal = boundsProp.GetValue(comp);
-                                if (boundsVal is Vector2 v2 && v2 != Vector2.zero)
-                                {
-                                    _logger.Info($"Map bounds from property: {v2}");
-                                    return v2;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            catch { }
-
-            return null;
         }
     }
 }
