@@ -8,7 +8,7 @@
         <GamePath Condition="'$(GamePath)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo</GamePath>
 
         <!-- Mod metadata for MelonLoader -->
-        <Version>1.0.1</Version>
+        <Version>1.0.2</Version>
         <ModClassName>CharacterSelect.CharacterSelectMod</ModClassName>
         <ModDisplayName>CharacterSelect</ModDisplayName>
     </PropertyGroup>
@@ -17,9 +17,10 @@
         <PackageReference Include="LavaGang.MelonLoader" Version="0.7.2" />
     </ItemGroup>
 
-    <!-- Embed custom assets (icons) into the DLL -->
+    <!-- Embed custom assets (icons, reskins) into the DLL -->
     <ItemGroup>
-        <EmbeddedResource Include="Assets\*.png" />
+        <EmbeddedResource Include="Assets\**\*.png" />
+        <EmbeddedResource Include="Assets\**\*.json" />
     </ItemGroup>
 
     <!-- Reference local MelonLoader assemblies -->

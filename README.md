@@ -25,13 +25,15 @@ Menu quality-of-life improvements for the hosting flow.
 
 ### CharacterSelect
 
-Quick character switching via a visual UI.
+Quick character switching via a visual UI, with custom skins support.
 
 **Features:**
 - Press F6 to open a visual character selection grid with 15 characters
-- Shows character icons where available, placeholder for others
+- All characters have custom embedded icons
 - Remembers your selection across sessions
 - Detects in-game character changes and respects them
+- Custom skin system: place textures in `Mods/reskins/{character}/`
+- Skin tools panel (gear button) for exporting and managing character textures
 
 **Controls:**
 | Key | Action |

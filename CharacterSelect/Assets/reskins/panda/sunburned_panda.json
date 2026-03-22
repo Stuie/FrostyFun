@@ -1,0 +1,18 @@
+{
+  "transforms": [
+    {
+      "name": "dark_to_red",
+      "where": { "brightness_min": 0.0, "brightness_max": 0.35 },
+      "action": "recolor",
+      "color": [0.55, 0.15, 0.08],
+      "blend": 0.85
+    },
+    {
+      "name": "warm_whites",
+      "where": { "brightness_min": 0.7, "brightness_max": 1.0 },
+      "action": "tint",
+      "color": [1.0, 0.93, 0.88],
+      "blend": 0.4
+    }
+  ]
+}

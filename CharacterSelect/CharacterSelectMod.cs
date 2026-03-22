@@ -3,7 +3,11 @@ using UnityEngine;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
+using System.Linq;
 using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Object = UnityEngine.Object;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes;
@@ -32,6 +36,7 @@ namespace CharacterSelect
         private Texture2D _buttonHoverTexture;
         private Texture2D _buttonSelectedTexture;
         private Texture2D _cursorTexture;
+        private Texture2D _wrenchTexture;
 
         // Character data - maps display info to actual game character IDs
         // Turtle (ID 4) is excluded as it doesn't work properly
@@ -51,6 +56,17 @@ namespace CharacterSelect
             ("Orange Fox", 14, "icon_character_foxorange"),
             ("Arctic Fox", 15, null),
             ("Panda", 16, null),
+        };
+
+        // Model groups — top-level UI shows these, click to expand variants + skins
+        private static readonly (string GroupName, string ModelKey, int[] GameIds)[] ModelGroups = {
+            ("Frog",    "frog",    new[] { 1, 10, 11 }),
+            ("Penguin", "penguin", new[] { 2 }),
+            ("Seal",    "seal",    new[] { 3, 8, 9 }),
+            ("Bear",    "bear",    new[] { 5, 6, 7 }),
+            ("Toad",    "toad",    new[] { 12, 13 }),
+            ("Fox",     "fox",     new[] { 14, 15 }),
+            ("Panda",   "panda",   new[] { 16 }),
         };
 
         // Custom embedded icons for characters without game icons (keyed by GameId)
@@ -75,8 +91,70 @@ namespace CharacterSelect
         private int _currentCharacterId = 1;
         private int _hoverCharacterId = -1;
 
+        // Reskin system
+        private bool _dumpedRendererInfo = false;
+        private string _reskinsDir;
+
+        // Maps character key (e.g. "panda") → list of available skins
+        private Dictionary<string, List<SkinEntry>> _availableSkins = new();
+
+        private struct SkinEntry
+        {
+            public string DisplayName; // "Sunburned Panda"
+            public string FilePath;    // full path to skin texture PNG/BMP (or generated cache path for JSON skins)
+            public string IconPath;    // full path to icon PNG (nullable)
+            public bool NeedsGeneration; // true if this is a JSON procedural skin that needs generating
+            public string JsonPath;      // full path to .json definition (null for file-based skins)
+        }
+
+        // JSON procedural skin data model
+        private class SkinDefinition
+        {
+            [JsonPropertyName("transforms")]
+            public List<SkinTransform> Transforms { get; set; } = new();
+        }
+
+        private class SkinTransform
+        {
+            [JsonPropertyName("name")]
+            public string Name { get; set; }
+            [JsonPropertyName("action")]
+            public string Action { get; set; }
+            [JsonPropertyName("where")]
+            public SkinWhere Where { get; set; }
+            [JsonPropertyName("color")]
+            public float[] Color { get; set; }
+            [JsonPropertyName("blend")]
+            public float Blend { get; set; }
+            [JsonPropertyName("degrees")]
+            public float Degrees { get; set; }
+        }
+
+        private class SkinWhere
+        {
+            [JsonPropertyName("brightness_min")]
+            public float BrightnessMin { get; set; }
+            [JsonPropertyName("brightness_max")]
+            public float BrightnessMax { get; set; } = 1.0f;
+        }
+
+        private Dictionary<string, Texture2D> _skinTextureCache = new(); // keyed by file path
+        private Dictionary<string, Texture2D> _skinIconCache = new();  // keyed by icon file path
+        private Dictionary<int, Texture> _originalSkinTextures = new(); // keyed by character GameId
+        private float _reskinApplyTime = 0f;
+        private int _pendingReskinCharacterId = -1;
+        private string _pendingReskinPath = null;
+
+        // UI state for two-step skin selection
+        private int _expandedGroupIndex = -1; // Which model group is expanded (-1 = none)
+        private bool _showToolsPanel = false; // Gear/tools panel visible
+
+        // Currently active skin (null = original)
+        private string _activeSkinPath = null;
+
         // Persistence - remember character across sessions
         private const string PREF_KEY = "CharacterSelect_SavedCharacterId";
+        private const string PREF_SKIN_KEY = "CharacterSelect_SavedSkinName";
         private int _savedCharacterId = 0;           // 0 = no saved preference
         private int _lastModSetCharacterId = 0;      // What we last set via the mod
         private int _lastDetectedCharacterId = 0;    // What we last detected on the player
@@ -89,39 +167,48 @@ namespace CharacterSelect
 
         public override void OnInitializeMelon()
         {
-            Melon<CharacterSelectMod>.Logger.Msg("CharacterSelect loaded!");
-            Melon<CharacterSelectMod>.Logger.Msg("  Press F6 to open character selection");
+            Melon<CharacterSelectMod>.Logger.Msg("CharacterSelect loaded! Press F6 to open.");
+
+            // Deploy embedded reskins to Mods/reskins/ (first run)
+            DeployEmbeddedReskins();
 
             // Load saved character preference
             LoadSavedCharacter();
+
+            // Scan for reskin files in Mods/reskins/
+            ScanForReskins();
         }
 
         private void LoadSavedCharacter()
         {
             _savedCharacterId = PlayerPrefs.GetInt(PREF_KEY, 0);
+            _activeSkinPath = PlayerPrefs.GetString(PREF_SKIN_KEY, "");
+            if (string.IsNullOrEmpty(_activeSkinPath)) _activeSkinPath = null;
             if (_savedCharacterId > 0)
-            {
-                Melon<CharacterSelectMod>.Logger.Msg($"Loaded saved character: {GetCharacterName(_savedCharacterId)}");
-            }
+                Melon<CharacterSelectMod>.Logger.Msg($"Saved character: {GetCharacterName(_savedCharacterId)}");
         }
 
-        private void SaveCharacterPreference(int characterId)
+        private void SaveCharacterPreference(int characterId, string skinPath = null)
         {
             _savedCharacterId = characterId;
             _lastModSetCharacterId = characterId;
+            _activeSkinPath = skinPath;
             PlayerPrefs.SetInt(PREF_KEY, characterId);
+            PlayerPrefs.SetString(PREF_SKIN_KEY, skinPath ?? "");
             PlayerPrefs.Save();
-            Melon<CharacterSelectMod>.Logger.Msg($"Saved character preference: {GetCharacterName(characterId)}");
+            Melon<CharacterSelectMod>.Logger.Msg($"Saved preference: {GetCharacterName(characterId)}" +
+                (skinPath != null ? $" (skin: {Path.GetFileNameWithoutExtension(skinPath)})" : ""));
         }
 
         private void ClearCharacterPreference()
         {
             if (_savedCharacterId != 0)
             {
-                Melon<CharacterSelectMod>.Logger.Msg("Cleared saved character (changed via in-game menu)");
                 _savedCharacterId = 0;
                 _lastModSetCharacterId = 0;
+                _activeSkinPath = null;
                 PlayerPrefs.SetInt(PREF_KEY, 0);
+                PlayerPrefs.SetString(PREF_SKIN_KEY, "");
                 PlayerPrefs.Save();
             }
         }
@@ -132,7 +219,6 @@ namespace CharacterSelect
             _sceneLoadTime = Time.time;
             _appliedSavedCharacter = false;
             _lastDetectedCharacterId = 0;
-            Melon<CharacterSelectMod>.Logger.Msg($"Scene loaded: {sceneName}");
         }
 
         public override void OnUpdate()
@@ -156,12 +242,6 @@ namespace CharacterSelect
                 CloseUI();
             }
 
-            // F8 debug disabled - conflicts with YetiHunt teleport
-            // if (Input.GetKeyDown(KeyCode.F8))
-            // {
-            //     DumpCharacterAssets();
-            // }
-
             // Detect player spawn/despawn
             var playerObj = GameObject.Find("Player Networked(Clone)");
             bool playerPresent = playerObj != null;
@@ -172,12 +252,9 @@ namespace CharacterSelect
                 _playerSpawnTime = Time.time;
                 _appliedSavedCharacter = false;
                 _lastDetectedCharacterId = 0;
-                Melon<CharacterSelectMod>.Logger.Msg($"Player spawned, saved character: {(_savedCharacterId > 0 ? GetCharacterName(_savedCharacterId) : "none")}");
             }
             else if (!playerPresent && _playerWasPresent)
             {
-                // Player despawned
-                Melon<CharacterSelectMod>.Logger.Msg("Player despawned");
             }
             _playerWasPresent = playerPresent;
 
@@ -187,13 +264,22 @@ namespace CharacterSelect
                 float timeSinceSpawn = Time.time - _playerSpawnTime;
                 if (timeSinceSpawn > 1.5f && timeSinceSpawn < 15.0f) // Apply 1.5-15s after spawn
                 {
-                    Melon<CharacterSelectMod>.Logger.Msg($"Auto-applying saved character: {GetCharacterName(_savedCharacterId)} ({timeSinceSpawn:F1}s after spawn)");
+                    Melon<CharacterSelectMod>.Logger.Msg($"Auto-applying saved character: {GetCharacterName(_savedCharacterId)}");
                     _lastModSetCharacterId = _savedCharacterId;
                     SwitchCharacter(_savedCharacterId);
+                    ScheduleReskin(_savedCharacterId, _activeSkinPath);
                     _currentCharacterId = _savedCharacterId;
                     _lastDetectedCharacterId = _savedCharacterId;
                     _appliedSavedCharacter = true;
                 }
+            }
+
+            // Apply pending reskin after delay (waits for model swap to complete)
+            if (_pendingReskinCharacterId >= 0 && Time.time >= _reskinApplyTime)
+            {
+                ApplyReskin(_pendingReskinCharacterId, _pendingReskinPath);
+                _pendingReskinCharacterId = -1;
+                _pendingReskinPath = null;
             }
 
             // Periodically check current character to detect in-game changes
@@ -216,34 +302,27 @@ namespace CharacterSelect
             if (_lastDetectedCharacterId == 0)
             {
                 _lastDetectedCharacterId = currentChar;
-                Melon<CharacterSelectMod>.Logger.Msg($"Initial character detected: {GetCharacterName(currentChar)}");
                 return;
             }
 
             // If character changed and it wasn't us who changed it
             if (currentChar != _lastDetectedCharacterId)
             {
-                Melon<CharacterSelectMod>.Logger.Msg($"Character change detected: {GetCharacterName(_lastDetectedCharacterId)} -> {GetCharacterName(currentChar)}");
-
                 // Did we recently set this character?
                 if (currentChar == _lastModSetCharacterId)
                 {
                     // This is our change taking effect - just update tracking
                     _lastDetectedCharacterId = currentChar;
-                    Melon<CharacterSelectMod>.Logger.Msg("  (This was our mod's change)");
                 }
                 else
                 {
                     // User changed character via in-game menu - clear our preference
-                    Melon<CharacterSelectMod>.Logger.Msg("  User changed via in-game menu - clearing saved preference");
                     ClearCharacterPreference();
                     _lastDetectedCharacterId = currentChar;
                     _currentCharacterId = currentChar;
                 }
             }
         }
-
-        private bool _dumpedPlayerControlMembers = false;
 
         private int GetCurrentCharacterId()
         {
@@ -294,22 +373,6 @@ namespace CharacterSelect
                 }
 
                 if (pcType == null) return -1;
-
-                // One-time dump of PlayerControl members to find the right property
-                if (!_dumpedPlayerControlMembers)
-                {
-                    _dumpedPlayerControlMembers = true;
-                    Melon<CharacterSelectMod>.Logger.Msg("=== PlayerControl members (looking for character property) ===");
-                    foreach (var prop in pcType.GetProperties())
-                    {
-                        Melon<CharacterSelectMod>.Logger.Msg($"  Property: {prop.Name} : {prop.PropertyType.Name}");
-                    }
-                    foreach (var field in pcType.GetFields())
-                    {
-                        Melon<CharacterSelectMod>.Logger.Msg($"  Field: {field.Name} : {field.FieldType.Name}");
-                    }
-                    Melon<CharacterSelectMod>.Logger.Msg("=== End PlayerControl members ===");
-                }
 
                 // Cast to actual type
                 var castMethod = typeof(Il2CppObjectBase).GetMethod("Cast").MakeGenericMethod(pcType);
@@ -413,7 +476,8 @@ namespace CharacterSelect
             DisablePlayerInput();
 
             _showUI = true;
-            Melon<CharacterSelectMod>.Logger.Msg("Character selection opened");
+            _expandedGroupIndex = -1;
+            _showToolsPanel = false;
         }
 
         private void CloseUI()
@@ -448,7 +512,6 @@ namespace CharacterSelect
                             {
                                 _playerLocalInputWasEnabled = behaviour.enabled;
                                 behaviour.enabled = false;
-                                Melon<CharacterSelectMod>.Logger.Msg("Disabled PlayerLocalInput");
                             }
                             break;
                         }
@@ -470,7 +533,6 @@ namespace CharacterSelect
                             {
                                 _playerCameraControlWasEnabled = behaviour.enabled;
                                 behaviour.enabled = false;
-                                Melon<CharacterSelectMod>.Logger.Msg("Disabled PlayerCameraControl");
                             }
                             break;
                         }
@@ -491,7 +553,6 @@ namespace CharacterSelect
                             if (behaviour != null && behaviour.enabled)
                             {
                                 behaviour.enabled = false;
-                                Melon<CharacterSelectMod>.Logger.Msg($"Disabled {typeName}");
                             }
                         }
                     }
@@ -588,12 +649,7 @@ namespace CharacterSelect
         {
             if (_texturesLoaded) return;
 
-            // Load placeholder from embedded resources
             _placeholderTexture = LoadEmbeddedTexture("character_placeholder.png");
-            if (_placeholderTexture != null)
-            {
-                Melon<CharacterSelectMod>.Logger.Msg("Loaded custom placeholder icon from embedded resources");
-            }
 
             _characterTextures = new Texture2D[Characters.Length];
             var allTextures = Resources.FindObjectsOfTypeAll<Texture2D>();
@@ -610,7 +666,6 @@ namespace CharacterSelect
                         if (tex != null && tex.name == iconName)
                         {
                             _characterTextures[i] = tex;
-                            Melon<CharacterSelectMod>.Logger.Msg($"Loaded game icon for {Characters[i].Name}: {iconName}");
                             break;
                         }
                     }
@@ -618,21 +673,25 @@ namespace CharacterSelect
 
                 // If no game icon found, try custom embedded icon
                 if (_characterTextures[i] == null && CustomIcons.TryGetValue(Characters[i].GameId, out var customFile))
-                {
                     _characterTextures[i] = LoadEmbeddedTexture(customFile);
-                    if (_characterTextures[i] != null)
-                    {
-                        Melon<CharacterSelectMod>.Logger.Msg($"Loaded custom icon for {Characters[i].Name}: {customFile}");
-                    }
-                }
 
-                // Still nothing? Use placeholder
                 if (_characterTextures[i] == null && _placeholderTexture != null)
-                {
                     _characterTextures[i] = _placeholderTexture;
-                    Melon<CharacterSelectMod>.Logger.Msg($"Using placeholder for {Characters[i].Name}");
+            }
+
+            // Find wrench/settings icon from game textures
+            foreach (var tex in allTextures)
+            {
+                if (tex == null) continue;
+                var name = tex.name?.ToLower() ?? "";
+                if (name.Contains("wrench") || name.Contains("spanner"))
+                {
+                    _wrenchTexture = tex;
+                    break;
                 }
             }
+            if (_wrenchTexture == null)
+                _wrenchTexture = MakeWrenchTexture();
 
             _texturesLoaded = true;
         }
@@ -647,13 +706,7 @@ namespace CharacterSelect
                 using (var stream = assembly.GetManifestResourceStream(resourceName))
                 {
                     if (stream == null)
-                    {
-                        Melon<CharacterSelectMod>.Logger.Warning($"Embedded resource not found: {resourceName}");
-                        // List available resources for debugging
-                        var names = assembly.GetManifestResourceNames();
-                        Melon<CharacterSelectMod>.Logger.Msg($"Available resources: {string.Join(", ", names)}");
                         return null;
-                    }
 
                     byte[] data = new byte[stream.Length];
                     stream.Read(data, 0, data.Length);
@@ -665,10 +718,7 @@ namespace CharacterSelect
                         return texture;
                     }
                     else
-                    {
-                        Melon<CharacterSelectMod>.Logger.Warning($"Failed to load image data from {fileName}");
                         return null;
-                    }
                 }
             }
             catch (Exception ex)
@@ -739,12 +789,46 @@ namespace CharacterSelect
             return tex;
         }
 
+        private Texture2D MakeWrenchTexture()
+        {
+            // 16x16 simple wrench icon
+            int size = 16;
+            var tex = new Texture2D(size, size);
+            var clear = new Color(0, 0, 0, 0);
+            var white = Color.white;
+
+            for (int py = 0; py < size; py++)
+                for (int px = 0; px < size; px++)
+                    tex.SetPixel(px, py, clear);
+
+            // Draw a simple wrench shape (bottom-left to top-right diagonal with head)
+            // Handle (diagonal bar)
+            int[][] handle = { new[]{2,1}, new[]{3,2}, new[]{4,3}, new[]{5,4}, new[]{6,5}, new[]{7,6}, new[]{8,7},
+                               new[]{3,1}, new[]{4,2}, new[]{5,3}, new[]{6,4}, new[]{7,5}, new[]{8,6}, new[]{9,7} };
+            foreach (var p in handle) tex.SetPixel(p[0], p[1], white);
+
+            // Wrench head (top-right open jaw)
+            int[][] head = { new[]{9,8}, new[]{10,9}, new[]{11,10}, new[]{12,11}, new[]{13,12},
+                             new[]{10,8}, new[]{11,9}, new[]{12,10}, new[]{13,11}, new[]{14,12},
+                             new[]{13,13}, new[]{14,13},
+                             new[]{11,12}, new[]{10,11}, new[]{9,10}, new[]{9,9},
+                             new[]{12,13}, new[]{11,13}, new[]{10,12}, new[]{10,10} };
+            foreach (var p in head) tex.SetPixel(p[0], p[1], white);
+
+            // Small nub at handle base
+            tex.SetPixel(1, 1, white);
+            tex.SetPixel(2, 0, white);
+            tex.SetPixel(1, 0, white);
+
+            tex.Apply();
+            return tex;
+        }
+
         private void DrawCharacterSelectUI()
         {
-            // Window dimensions
-            int charCount = Characters.Length; // 15 characters (Turtle removed)
-            int columns = 5;
-            int rows = (charCount + columns - 1) / columns; // 3 rows for 15 chars
+            int columns = 4;
+            int groupCount = ModelGroups.Length;
+            int rows = (groupCount + columns - 1) / columns;
 
             float buttonWidth = 130;
             float buttonHeight = 115;
@@ -752,7 +836,32 @@ namespace CharacterSelect
             float windowPadding = 20;
 
             float windowWidth = columns * buttonWidth + (columns - 1) * spacing + windowPadding * 2;
-            float windowHeight = rows * buttonHeight + (rows - 1) * spacing + 120; // Extra for title and close button
+
+            // Calculate expanded panel height if a group is open
+            float panelHeight = 0;
+            int panelItemCount = 0;
+            List<SkinEntry> activeSkins = null;
+            int[] expandedVariants = null;
+            string expandedModelKey = null;
+
+            if (_showToolsPanel)
+            {
+                // Tools panel takes the expanded area
+                panelHeight = 150;
+            }
+            else if (_expandedGroupIndex >= 0 && _expandedGroupIndex < ModelGroups.Length)
+            {
+                expandedVariants = ModelGroups[_expandedGroupIndex].GameIds;
+                expandedModelKey = ModelGroups[_expandedGroupIndex].ModelKey;
+                _availableSkins.TryGetValue(expandedModelKey, out activeSkins);
+
+                // Panel items: variants + custom skins
+                panelItemCount = expandedVariants.Length + (activeSkins?.Count ?? 0);
+                int panelRows = (panelItemCount + columns - 1) / columns;
+                panelHeight = 30 + panelRows * (buttonHeight + spacing);
+            }
+
+            float windowHeight = rows * buttonHeight + (rows - 1) * spacing + 120 + panelHeight;
 
             float x = (Screen.width - windowWidth) / 2;
             float y = (Screen.height - windowHeight) / 2;
@@ -760,17 +869,34 @@ namespace CharacterSelect
             // Draw background
             GUI.DrawTexture(new Rect(x, y, windowWidth, windowHeight), _bgTexture);
 
-            // Title (centered)
+            // Title
             GUIStyle titleStyle = new GUIStyle(GUI.skin.label);
             titleStyle.alignment = TextAnchor.MiddleCenter;
             titleStyle.fontSize = 18;
             titleStyle.fontStyle = FontStyle.Bold;
             GUI.Label(new Rect(x, y + 10, windowWidth, 30), "Select Character", titleStyle);
 
+            // Wrench/settings button (top-right corner of window)
+            float gearSize = 30;
+            Rect gearRect = new Rect(x + windowWidth - gearSize - 8, y + 8, gearSize, gearSize);
+            bool gearHover = gearRect.Contains(Event.current.mousePosition);
+            GUI.DrawTexture(gearRect, _showToolsPanel ? _buttonSelectedTexture : gearHover ? _buttonHoverTexture : _buttonTexture);
+            if (_wrenchTexture != null)
+            {
+                float iconPad = 5;
+                Rect iconRect = new Rect(gearRect.x + iconPad, gearRect.y + iconPad, gearSize - iconPad * 2, gearSize - iconPad * 2);
+                GUI.DrawTexture(iconRect, _wrenchTexture, ScaleMode.ScaleToFit);
+            }
+            if (gearHover && Event.current.type == EventType.MouseDown && Event.current.button == 0)
+            {
+                _showToolsPanel = !_showToolsPanel;
+                if (_showToolsPanel) _expandedGroupIndex = -1;
+                Event.current.Use();
+            }
+
             float startX = x + windowPadding;
             float startY = y + 50;
 
-            // Image dimensions within button
             float imgSize = 70;
             float imgPadding = (buttonWidth - imgSize) / 2;
             float labelHeight = 25;
@@ -781,44 +907,225 @@ namespace CharacterSelect
             labelStyle.alignment = TextAnchor.MiddleCenter;
             labelStyle.fontSize = 11;
 
-            for (int i = 0; i < Characters.Length; i++)
+            GUIStyle badgeStyle = new GUIStyle(GUI.skin.label);
+            badgeStyle.alignment = TextAnchor.UpperRight;
+            badgeStyle.fontSize = 14;
+            badgeStyle.fontStyle = FontStyle.Bold;
+            badgeStyle.normal.textColor = new Color(1f, 0.85f, 0.2f);
+
+            // --- Top level: model group buttons ---
+            for (int gi = 0; gi < ModelGroups.Length; gi++)
             {
-                int row = i / columns;
-                int col = i % columns;
+                int row = gi / columns;
+                int col = gi % columns;
 
                 float btnX = startX + col * (buttonWidth + spacing);
                 float btnY = startY + row * (buttonHeight + spacing);
                 Rect buttonRect = new Rect(btnX, btnY, buttonWidth, buttonHeight);
 
-                int gameId = Characters[i].GameId;
-
-                // Check hover
+                var group = ModelGroups[gi];
+                bool isExpanded = (gi == _expandedGroupIndex);
+                bool isCurrentGroup = group.GameIds.Contains(_currentCharacterId);
+                bool hasCustomSkins = _availableSkins.ContainsKey(group.ModelKey) && _availableSkins[group.ModelKey].Count > 0;
+                bool isExpandable = group.GameIds.Length > 1 || hasCustomSkins;
                 bool isHover = buttonRect.Contains(Event.current.mousePosition);
-                bool isSelected = (gameId == _currentCharacterId);
 
-                // Draw button background
-                Texture2D btnTex = isSelected ? _buttonSelectedTexture : (isHover ? _buttonHoverTexture : _buttonTexture);
+                // Background — only show current group as selected when no group is expanded
+                Texture2D btnTex = isExpanded ? _buttonSelectedTexture
+                    : (isCurrentGroup && _expandedGroupIndex < 0) ? _buttonSelectedTexture
+                    : isHover ? _buttonHoverTexture
+                    : _buttonTexture;
                 GUI.DrawTexture(buttonRect, btnTex);
 
-                // Draw character image if available
-                if (_characterTextures != null && i < _characterTextures.Length && _characterTextures[i] != null)
+                // Icon — use the first variant's icon
+                int firstId = group.GameIds[0];
+                Texture2D icon = GetCharacterIcon(firstId);
+                if (icon != null)
                 {
                     Rect imgRect = new Rect(btnX + imgPadding, btnY + 8, imgSize, imgSize);
-                    GUI.DrawTexture(imgRect, _characterTextures[i], ScaleMode.ScaleToFit);
+                    GUI.DrawTexture(imgRect, icon, ScaleMode.ScaleToFit);
                 }
 
-                // Draw character name at bottom of button
-                Rect labelRect = new Rect(btnX, btnY + buttonHeight - labelHeight - 5, buttonWidth, labelHeight);
-                GUI.Label(labelRect, Characters[i].Name, labelStyle);
+                // Badge indicating expandable (variants or skins)
+                if (isExpandable)
+                    GUI.Label(new Rect(btnX + buttonWidth - 22, btnY + 2, 20, 20), "\u2605", badgeStyle);
 
-                // Handle click
+                // Label
+                Rect labelRect = new Rect(btnX, btnY + buttonHeight - labelHeight - 5, buttonWidth, labelHeight);
+                GUI.Label(labelRect, group.GroupName, labelStyle);
+
+                // Click
                 if (isHover && Event.current.type == EventType.MouseDown && Event.current.button == 0)
                 {
-                    SelectCharacter(gameId);
+                    _showToolsPanel = false;
+                    if (!isExpandable)
+                    {
+                        // Single variant, no skins — immediate select
+                        SelectCharacter(group.GameIds[0], null);
+                    }
+                    else
+                    {
+                        // Toggle expanded panel
+                        _expandedGroupIndex = isExpanded ? -1 : gi;
+                    }
                     Event.current.Use();
                 }
 
-                if (isHover) _hoverCharacterId = gameId;
+                if (isHover) _hoverCharacterId = firstId;
+            }
+
+            // --- Tools panel ---
+            if (_showToolsPanel)
+            {
+                float panelY = startY + rows * (buttonHeight + spacing) + 5;
+
+                GUIStyle sectionStyle = new GUIStyle(GUI.skin.label);
+                sectionStyle.alignment = TextAnchor.MiddleCenter;
+                sectionStyle.fontSize = 13;
+                sectionStyle.fontStyle = FontStyle.Bold;
+                GUI.Label(new Rect(x, panelY, windowWidth, 22),
+                    "\u2500\u2500\u2500  Skin Tools  \u2500\u2500\u2500", sectionStyle);
+                panelY += 28;
+
+                GUIStyle descStyle = new GUIStyle(GUI.skin.label);
+                descStyle.alignment = TextAnchor.MiddleCenter;
+                descStyle.fontSize = 11;
+                descStyle.wordWrap = true;
+                GUI.Label(new Rect(x + windowPadding, panelY, windowWidth - windowPadding * 2, 30),
+                    "Export the current character's skin texture as a PNG file for editing.", descStyle);
+                panelY += 35;
+
+                float toolBtnWidth = 200;
+                float toolBtnHeight = 32;
+                float toolBtnX = x + (windowWidth - toolBtnWidth * 2 - spacing) / 2;
+
+                // Export Skin Texture button
+                Rect exportRect = new Rect(toolBtnX, panelY, toolBtnWidth, toolBtnHeight);
+                bool exportHover = exportRect.Contains(Event.current.mousePosition);
+                GUI.DrawTexture(exportRect, exportHover ? _buttonHoverTexture : _buttonTexture);
+                GUIStyle toolLabelStyle = new GUIStyle(GUI.skin.label);
+                toolLabelStyle.alignment = TextAnchor.MiddleCenter;
+                GUI.Label(exportRect, "Export Skin Texture", toolLabelStyle);
+                if (exportHover && Event.current.type == EventType.MouseDown && Event.current.button == 0)
+                {
+                    DumpCurrentSkinTexture();
+                    Event.current.Use();
+                }
+
+                // Open Folder button
+                Rect folderRect = new Rect(toolBtnX + toolBtnWidth + spacing, panelY, toolBtnWidth, toolBtnHeight);
+                bool folderHover = folderRect.Contains(Event.current.mousePosition);
+                GUI.DrawTexture(folderRect, folderHover ? _buttonHoverTexture : _buttonTexture);
+                GUI.Label(folderRect, "Open Skin Dumps Folder", toolLabelStyle);
+                if (folderHover && Event.current.type == EventType.MouseDown && Event.current.button == 0)
+                {
+                    var modsDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                    var dumpDir = Path.Combine(modsDir, "skin_dumps");
+                    Directory.CreateDirectory(dumpDir);
+                    System.Diagnostics.Process.Start("explorer.exe", dumpDir);
+                    Event.current.Use();
+                }
+            }
+
+            // --- Expanded panel: variants + skins ---
+            if (!_showToolsPanel && _expandedGroupIndex >= 0 && expandedVariants != null)
+            {
+                float panelY = startY + rows * (buttonHeight + spacing) + 5;
+                var group = ModelGroups[_expandedGroupIndex];
+
+                // Separator
+                GUIStyle sectionStyle = new GUIStyle(GUI.skin.label);
+                sectionStyle.alignment = TextAnchor.MiddleCenter;
+                sectionStyle.fontSize = 13;
+                sectionStyle.fontStyle = FontStyle.Bold;
+                GUI.Label(new Rect(x, panelY, windowWidth, 22),
+                    $"\u2500\u2500\u2500  {group.GroupName}  \u2500\u2500\u2500", sectionStyle);
+                panelY += 28;
+
+                int itemIndex = 0;
+
+                // Variant buttons
+                for (int vi = 0; vi < expandedVariants.Length; vi++)
+                {
+                    int gameId = expandedVariants[vi];
+                    int pRow = itemIndex / columns;
+                    int pCol = itemIndex % columns;
+                    float btnX = startX + pCol * (buttonWidth + spacing);
+                    float btnY = panelY + pRow * (buttonHeight + spacing);
+                    Rect btnRect = new Rect(btnX, btnY, buttonWidth, buttonHeight);
+
+                    bool hover = btnRect.Contains(Event.current.mousePosition);
+                    bool selected = (gameId == _currentCharacterId && _activeSkinPath == null);
+
+                    GUI.DrawTexture(btnRect, selected ? _buttonSelectedTexture : hover ? _buttonHoverTexture : _buttonTexture);
+
+                    Texture2D varIcon = GetCharacterIcon(gameId);
+                    if (varIcon != null)
+                    {
+                        Rect imgRect = new Rect(btnX + imgPadding, btnY + 8, imgSize, imgSize);
+                        GUI.DrawTexture(imgRect, varIcon, ScaleMode.ScaleToFit);
+                    }
+
+                    Rect lblRect = new Rect(btnX, btnY + buttonHeight - labelHeight - 5, buttonWidth, labelHeight);
+                    GUI.Label(lblRect, GetCharacterName(gameId), labelStyle);
+
+                    if (hover && Event.current.type == EventType.MouseDown && Event.current.button == 0)
+                    {
+                        SelectCharacter(gameId, null);
+                        Event.current.Use();
+                    }
+
+                    if (hover) _hoverCharacterId = gameId;
+                    itemIndex++;
+                }
+
+                // Custom skin buttons
+                if (activeSkins != null)
+                {
+                    for (int si = 0; si < activeSkins.Count; si++)
+                    {
+                        var entry = activeSkins[si];
+                        int pRow = itemIndex / columns;
+                        int pCol = itemIndex % columns;
+                        float btnX = startX + pCol * (buttonWidth + spacing);
+                        float btnY = panelY + pRow * (buttonHeight + spacing);
+                        Rect btnRect = new Rect(btnX, btnY, buttonWidth, buttonHeight);
+
+                        bool hover = btnRect.Contains(Event.current.mousePosition);
+                        bool selected = (_activeSkinPath == entry.FilePath);
+
+                        GUI.DrawTexture(btnRect, selected ? _buttonSelectedTexture : hover ? _buttonHoverTexture : _buttonTexture);
+
+                        // Load skin icon
+                        Texture2D skinIcon = null;
+                        if (entry.IconPath != null)
+                        {
+                            if (!_skinIconCache.TryGetValue(entry.IconPath, out skinIcon))
+                            {
+                                skinIcon = LoadReskinTexture(entry.IconPath);
+                                _skinIconCache[entry.IconPath] = skinIcon;
+                            }
+                        }
+                        if (skinIcon != null)
+                        {
+                            Rect imgRect = new Rect(btnX + imgPadding, btnY + 8, imgSize, imgSize);
+                            GUI.DrawTexture(imgRect, skinIcon, ScaleMode.ScaleToFit);
+                        }
+
+                        Rect lblRect = new Rect(btnX, btnY + buttonHeight - labelHeight - 5, buttonWidth, labelHeight);
+                        GUI.Label(lblRect, entry.DisplayName, labelStyle);
+
+                        if (hover && Event.current.type == EventType.MouseDown && Event.current.button == 0)
+                        {
+                            // Apply skin to current character, or first variant if no character from this group selected
+                            int targetId = group.GameIds.Contains(_currentCharacterId) ? _currentCharacterId : group.GameIds[0];
+                            SelectCharacter(targetId, entry.FilePath);
+                            Event.current.Use();
+                        }
+
+                        itemIndex++;
+                    }
+                }
             }
 
             // Close button
@@ -841,7 +1148,7 @@ namespace CharacterSelect
                 Event.current.Use();
             }
 
-            // Draw custom cursor (since game uses UI cursor that we can't easily access)
+            // Draw custom cursor
             if (_cursorTexture != null)
             {
                 Vector2 mousePos = Event.current.mousePosition;
@@ -849,14 +1156,27 @@ namespace CharacterSelect
             }
         }
 
-        private void SelectCharacter(int characterId)
+        private Texture2D GetCharacterIcon(int gameId)
+        {
+            if (_characterTextures == null) return null;
+            for (int i = 0; i < Characters.Length; i++)
+            {
+                if (Characters[i].GameId == gameId && i < _characterTextures.Length)
+                    return _characterTextures[i];
+            }
+            return null;
+        }
+
+        private void SelectCharacter(int characterId, string skinPath)
         {
             _currentCharacterId = characterId;
             _lastDetectedCharacterId = characterId;
-            _appliedSavedCharacter = true; // Don't auto-apply again this session
-            SaveCharacterPreference(characterId);
+            _appliedSavedCharacter = true;
+            _expandedGroupIndex = -1;
+            SaveCharacterPreference(characterId, skinPath);
             SwitchCharacter(characterId);
-            CloseUI();  // Close UI after selection (restores cursor)
+            ScheduleReskin(characterId, skinPath);
+            CloseUI();
         }
 
         private string GetCharacterName(int gameId)
@@ -988,6 +1308,1145 @@ namespace CharacterSelect
             catch
             {
                 return comp.GetType().Name;
+            }
+        }
+
+        private void DumpPlayerRendererInfo()
+        {
+            if (_dumpedRendererInfo) return;
+            _dumpedRendererInfo = true;
+
+            try
+            {
+                var playerObj = GameObject.Find("Player Networked(Clone)");
+                if (playerObj == null)
+                {
+                    Melon<CharacterSelectMod>.Logger.Warning("DumpPlayerRendererInfo: No player found");
+                    return;
+                }
+
+                var renderers = playerObj.GetComponentsInChildren<SkinnedMeshRenderer>();
+                Melon<CharacterSelectMod>.Logger.Msg($"=== PLAYER RENDERER DUMP ({renderers.Length} SkinnedMeshRenderers) ===");
+                foreach (var r in renderers)
+                {
+                    if (r == null) continue;
+                    var mat = r.material;
+                    Melon<CharacterSelectMod>.Logger.Msg($"  Renderer: {r.gameObject.name}, Mesh: {r.sharedMesh?.name}, Bones: {r.bones?.Length}");
+                    if (mat != null)
+                    {
+                        Melon<CharacterSelectMod>.Logger.Msg($"    Material: {mat.name}, Shader: {mat.shader?.name}");
+                        foreach (var prop in new[] { "_MainTex", "_BaseMap", "_BaseColorMap", "_AlbedoMap" })
+                        {
+                            if (mat.HasProperty(prop))
+                            {
+                                var tex = mat.GetTexture(prop);
+                                Melon<CharacterSelectMod>.Logger.Msg($"    Has {prop}: {tex?.name} ({tex?.width}x{tex?.height})");
+                            }
+                        }
+                    }
+                }
+
+                // Also check regular MeshRenderers
+                var meshRenderers = playerObj.GetComponentsInChildren<MeshRenderer>();
+                if (meshRenderers.Length > 0)
+                {
+                    Melon<CharacterSelectMod>.Logger.Msg($"  ({meshRenderers.Length} regular MeshRenderers)");
+                    foreach (var mr in meshRenderers)
+                    {
+                        if (mr == null) continue;
+                        var mat = mr.material;
+                        Melon<CharacterSelectMod>.Logger.Msg($"  MeshRenderer: {mr.gameObject.name}");
+                        if (mat != null)
+                        {
+                            Melon<CharacterSelectMod>.Logger.Msg($"    Material: {mat.name}, Shader: {mat.shader?.name}");
+                            foreach (var prop in new[] { "_MainTex", "_BaseMap", "_BaseColorMap", "_AlbedoMap" })
+                            {
+                                if (mat.HasProperty(prop))
+                                {
+                                    var tex = mat.GetTexture(prop);
+                                    Melon<CharacterSelectMod>.Logger.Msg($"    Has {prop}: {tex?.name} ({tex?.width}x{tex?.height})");
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Melon<CharacterSelectMod>.Logger.Msg("=== END RENDERER DUMP ===");
+            }
+            catch (Exception ex)
+            {
+                Melon<CharacterSelectMod>.Logger.Error($"DumpPlayerRendererInfo error: {ex.Message}");
+            }
+        }
+
+        /// <summary>Copy a GPU-only texture to a readable Texture2D via RenderTexture.</summary>
+        /// <summary>Bake a SkinnedMeshRenderer into a readable Mesh snapshot (preserves UVs).</summary>
+        private Mesh BakeMeshReadable(SkinnedMeshRenderer smr)
+        {
+            try
+            {
+                var baked = new Mesh();
+                smr.BakeMesh(baked);
+                return baked;
+            }
+            catch (Exception ex)
+            {
+                Melon<CharacterSelectMod>.Logger.Warning($"    BakeMesh failed for '{smr.gameObject.name}': {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>Copy a GPU-only texture to a readable Texture2D via RenderTexture.</summary>
+        private Texture2D CopyTextureToReadable(Texture2D source)
+        {
+            int w = source.width, h = source.height;
+            var rt = new RenderTexture(w, h, 0);
+            rt.Create();
+            Graphics.Blit(source, rt);
+
+            var prevRT = RenderTexture.active;
+            RenderTexture.active = rt;
+
+            var readable = new Texture2D(w, h, TextureFormat.RGBA32, false);
+            readable.ReadPixels(new Rect(0, 0, w, h), 0, 0);
+            readable.Apply();
+
+            RenderTexture.active = prevRT;
+            rt.Release();
+            Object.Destroy(rt);
+            return readable;
+        }
+
+        /// <summary>Encode a readable Texture2D to BMP (32bpp BGRA) byte array.</summary>
+        private byte[] EncodeToBmp(Texture2D tex)
+        {
+            int w = tex.width, h = tex.height;
+            int pixelDataSize = w * h * 4;
+            int fileSize = 54 + pixelDataSize;
+            byte[] bmp = new byte[fileSize];
+
+            // BMP file header
+            bmp[0] = 0x42; bmp[1] = 0x4D;
+            BitConverter.GetBytes(fileSize).CopyTo(bmp, 2);
+            BitConverter.GetBytes(54).CopyTo(bmp, 10);
+
+            // DIB header
+            BitConverter.GetBytes(40).CopyTo(bmp, 14);
+            BitConverter.GetBytes(w).CopyTo(bmp, 18);
+            BitConverter.GetBytes(h).CopyTo(bmp, 22);
+            bmp[26] = 1; bmp[28] = 32;
+
+            int offset = 54;
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    var c = tex.GetPixel(x, y);
+                    bmp[offset++] = (byte)(c.b * 255f);
+                    bmp[offset++] = (byte)(c.g * 255f);
+                    bmp[offset++] = (byte)(c.r * 255f);
+                    bmp[offset++] = (byte)(c.a * 255f);
+                }
+            }
+            return bmp;
+        }
+
+        /// <summary>Encode a readable Texture2D to PNG byte array manually (Il2Cpp-safe, no ImageConversion.EncodeToPNG).</summary>
+        private byte[] EncodeToPngManual(Texture2D tex)
+        {
+            int w = tex.width, h = tex.height;
+
+            using var ms = new MemoryStream();
+            using var bw = new BinaryWriter(ms);
+
+            // PNG signature
+            bw.Write(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A });
+
+            // IHDR chunk
+            WriteChunk(bw, "IHDR", writer =>
+            {
+                writer.Write(ToBigEndian(w));
+                writer.Write(ToBigEndian(h));
+                writer.Write((byte)8);  // bit depth
+                writer.Write((byte)6);  // color type: RGBA
+                writer.Write((byte)0);  // compression
+                writer.Write((byte)0);  // filter
+                writer.Write((byte)0);  // interlace
+            });
+
+            // IDAT chunk — build raw scanlines then DEFLATE
+            byte[] rawData;
+            using (var rawMs = new MemoryStream())
+            {
+                for (int y = h - 1; y >= 0; y--) // PNG is top-down, Unity y=0 is bottom
+                {
+                    rawMs.WriteByte(0); // filter: None
+                    for (int x = 0; x < w; x++)
+                    {
+                        var c = tex.GetPixel(x, y);
+                        rawMs.WriteByte((byte)(c.r * 255f));
+                        rawMs.WriteByte((byte)(c.g * 255f));
+                        rawMs.WriteByte((byte)(c.b * 255f));
+                        rawMs.WriteByte((byte)(c.a * 255f));
+                    }
+                }
+                rawData = rawMs.ToArray();
+            }
+
+            byte[] compressedData;
+            using (var compMs = new MemoryStream())
+            {
+                // zlib header: CM=8, CINFO=7 (32K window), FCHECK so header%31==0
+                compMs.WriteByte(0x78);
+                compMs.WriteByte(0x01);
+                using (var deflate = new DeflateStream(compMs, System.IO.Compression.CompressionLevel.Fastest, leaveOpen: true))
+                {
+                    deflate.Write(rawData, 0, rawData.Length);
+                }
+                // zlib Adler-32 checksum
+                uint adler = Adler32(rawData);
+                compMs.WriteByte((byte)((adler >> 24) & 0xFF));
+                compMs.WriteByte((byte)((adler >> 16) & 0xFF));
+                compMs.WriteByte((byte)((adler >> 8) & 0xFF));
+                compMs.WriteByte((byte)(adler & 0xFF));
+                compressedData = compMs.ToArray();
+            }
+
+            WriteChunk(bw, "IDAT", writer => writer.Write(compressedData));
+
+            // IEND chunk
+            WriteChunk(bw, "IEND", _ => { });
+
+            return ms.ToArray();
+        }
+
+        private static void WriteChunk(BinaryWriter bw, string type, Action<BinaryWriter> writeData)
+        {
+            using var dataMs = new MemoryStream();
+            using (var dataWriter = new BinaryWriter(dataMs, System.Text.Encoding.UTF8, leaveOpen: true))
+            {
+                writeData(dataWriter);
+            }
+            byte[] data = dataMs.ToArray();
+            byte[] typeBytes = System.Text.Encoding.ASCII.GetBytes(type);
+
+            bw.Write(ToBigEndian(data.Length));
+            bw.Write(typeBytes);
+            bw.Write(data);
+
+            // CRC32 over type + data
+            uint crc = Crc32(typeBytes, data);
+            bw.Write(ToBigEndian((int)crc));
+        }
+
+        private static byte[] ToBigEndian(int value)
+        {
+            byte[] bytes = BitConverter.GetBytes(value);
+            if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
+            return bytes;
+        }
+
+        private static uint Adler32(byte[] data)
+        {
+            uint a = 1, b = 0;
+            foreach (byte d in data)
+            {
+                a = (a + d) % 65521;
+                b = (b + a) % 65521;
+            }
+            return (b << 16) | a;
+        }
+
+        private static uint Crc32(byte[] typeBytes, byte[] data)
+        {
+            // Standard CRC32 with polynomial 0xEDB88320
+            uint crc = 0xFFFFFFFF;
+            foreach (byte b in typeBytes) crc = Crc32Update(crc, b);
+            foreach (byte b in data) crc = Crc32Update(crc, b);
+            return crc ^ 0xFFFFFFFF;
+        }
+
+        private static uint Crc32Update(uint crc, byte b)
+        {
+            crc ^= b;
+            for (int i = 0; i < 8; i++)
+                crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320 : crc >> 1;
+            return crc;
+        }
+
+        /// <summary>Get the original skin texture for a character from the player's material.</summary>
+        private Texture2D GetOriginalTexture(int characterId)
+        {
+            // Check cache first
+            if (_originalSkinTextures.TryGetValue(characterId, out var cached) && cached != null)
+            {
+                var tex2d = cached.TryCast<Texture2D>();
+                if (tex2d != null) return tex2d;
+            }
+
+            var playerObj = GameObject.Find("Player Networked(Clone)");
+            if (playerObj == null) return null;
+
+            if (!CharacterSkinMaterials.TryGetValue(characterId, out var skinPrefix)) return null;
+
+            var renderers = playerObj.GetComponentsInChildren<SkinnedMeshRenderer>();
+            foreach (var r in renderers)
+            {
+                if (r == null) continue;
+                var mat = r.material;
+                if (mat == null) continue;
+                var shaderName = mat.shader?.name;
+                if (shaderName == null || shaderName == "Standard" || shaderName.Contains("Eyes")) continue;
+                var matName = mat.name ?? "";
+                if (!matName.StartsWith(skinPrefix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                Texture tex = null;
+                if (mat.HasProperty("_BaseMap")) tex = mat.GetTexture("_BaseMap");
+                else if (mat.HasProperty("_MainTex")) tex = mat.GetTexture("_MainTex");
+
+                if (tex != null)
+                {
+                    _originalSkinTextures[characterId] = tex;
+                    var tex2d = tex.TryCast<Texture2D>();
+                    if (tex2d != null) return tex2d;
+                }
+            }
+            return null;
+        }
+
+        private void DumpCurrentSkinTexture()
+        {
+            try
+            {
+                var playerObj = GameObject.Find("Player Networked(Clone)");
+                if (playerObj == null)
+                {
+                    Melon<CharacterSelectMod>.Logger.Warning("DumpSkinTexture: No player found");
+                    return;
+                }
+
+                if (!CharacterSkinMaterials.TryGetValue(_currentCharacterId, out var skinPrefix))
+                {
+                    Melon<CharacterSelectMod>.Logger.Warning($"DumpSkinTexture: No skin prefix for character {_currentCharacterId}");
+                    return;
+                }
+
+                // Find skin texture
+                Texture skinTexture = null;
+                string textureName = null;
+                var renderers = playerObj.GetComponentsInChildren<SkinnedMeshRenderer>();
+                foreach (var r in renderers)
+                {
+                    if (r == null) continue;
+                    var mat = r.material;
+                    if (mat == null) continue;
+                    var shaderName = mat.shader?.name;
+                    if (shaderName == null || shaderName == "Standard" || shaderName.Contains("Eyes")) continue;
+                    var matName = mat.name ?? "";
+                    if (!matName.StartsWith(skinPrefix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    if (mat.HasProperty("_BaseMap"))
+                    {
+                        skinTexture = mat.GetTexture("_BaseMap");
+                        textureName = skinTexture?.name;
+                        break;
+                    }
+                    if (mat.HasProperty("_MainTex"))
+                    {
+                        skinTexture = mat.GetTexture("_MainTex");
+                        textureName = skinTexture?.name;
+                        break;
+                    }
+                }
+
+                if (skinTexture == null)
+                {
+                    Melon<CharacterSelectMod>.Logger.Warning("DumpSkinTexture: No skin texture found on player");
+                    return;
+                }
+
+                var skinTex2D = skinTexture.TryCast<Texture2D>();
+                if (skinTex2D == null)
+                {
+                    Melon<CharacterSelectMod>.Logger.Warning("DumpSkinTexture: Could not cast to Texture2D");
+                    return;
+                }
+
+
+                // Make readable if needed
+                Texture2D readableTex = skinTex2D.isReadable ? skinTex2D : CopyTextureToReadable(skinTex2D);
+
+                // Save as PNG
+                byte[] png = EncodeToPngManual(readableTex);
+
+                if (!skinTex2D.isReadable)
+                    Object.Destroy(readableTex);
+
+                var modsDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                var dumpDir = Path.Combine(modsDir, "skin_dumps");
+                Directory.CreateDirectory(dumpDir);
+
+                var charName = GetCharacterName(_currentCharacterId).ToLower().Replace(" ", "_");
+                var outputPath = Path.Combine(dumpDir, $"{charName}_skin.png");
+                File.WriteAllBytes(outputPath, png);
+                Melon<CharacterSelectMod>.Logger.Msg($"Saved skin texture to: {outputPath} ({png.Length} bytes)");
+
+                // Also export UV wireframe template
+                ExportUVTemplate(playerObj, skinPrefix, charName, dumpDir);
+            }
+            catch (Exception ex)
+            {
+                Melon<CharacterSelectMod>.Logger.Error($"DumpSkinTexture error: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        private void AutoExportUVTemplates()
+        {
+            try
+            {
+                var playerObj = GameObject.Find("Player Networked(Clone)");
+                if (playerObj == null) return;
+
+                if (!CharacterSkinMaterials.TryGetValue(_currentCharacterId, out var skinPrefix)) return;
+
+                var modsDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                var dumpDir = Path.Combine(modsDir, "skin_dumps");
+                var modelKey = GetModelKey(skinPrefix);
+                var outputPath = Path.Combine(dumpDir, $"{modelKey}_uv_template.png");
+
+                // Skip if already exported for this model
+                if (File.Exists(outputPath)) return;
+
+                Directory.CreateDirectory(dumpDir);
+                ExportUVTemplate(playerObj, skinPrefix, modelKey, dumpDir);
+            }
+            catch (Exception ex)
+            {
+                Melon<CharacterSelectMod>.Logger.Warning($"AutoExportUVTemplates error: {ex.Message}");
+            }
+        }
+
+        private void ExportUVTemplate(GameObject playerObj, string skinPrefix, string charName, string dumpDir)
+        {
+            try
+            {
+                int templateSize = 1024;
+                var template = new Texture2D(templateSize, templateSize, TextureFormat.RGBA32, false);
+
+                // Fill with transparent black
+                var clearPixels = new Color[templateSize * templateSize];
+                for (int i = 0; i < clearPixels.Length; i++)
+                    clearPixels[i] = new Color(0, 0, 0, 0);
+                template.SetPixels(clearPixels);
+
+                // Color palette for different body parts
+                Color[] partColors = {
+                    new Color(1f, 0.2f, 0.2f, 1f),   // Red
+                    new Color(0.2f, 1f, 0.2f, 1f),    // Green
+                    new Color(0.3f, 0.5f, 1f, 1f),    // Blue
+                    new Color(1f, 1f, 0.2f, 1f),       // Yellow
+                    new Color(1f, 0.5f, 0f, 1f),       // Orange
+                    new Color(0.8f, 0.2f, 1f, 1f),     // Purple
+                    new Color(0f, 1f, 1f, 1f),          // Cyan
+                    new Color(1f, 0.5f, 0.7f, 1f),     // Pink
+                };
+
+                var renderers = playerObj.GetComponentsInChildren<SkinnedMeshRenderer>();
+                int partIndex = 0;
+                var legend = new List<string>();
+
+
+                foreach (var r in renderers)
+                {
+                    if (r == null) continue;
+                    var mat = r.material;
+                    if (mat == null) continue;
+                    var shaderName = mat.shader?.name;
+                    if (shaderName == null || shaderName == "Standard" || shaderName.Contains("Eyes")) continue;
+                    var matName = mat.name ?? "";
+                    if (!matName.StartsWith(skinPrefix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    var mesh = r.sharedMesh;
+                    if (mesh == null) continue;
+
+                    // Meshes may not be readable — bake via SkinnedMeshRenderer to get readable copy
+                    if (!mesh.isReadable)
+                    {
+                        mesh = BakeMeshReadable(r);
+                        if (mesh == null) continue;
+                    }
+
+                    var uvs = mesh.uv;
+                    var triangles = mesh.triangles;
+                    if (uvs == null || uvs.Length == 0 || triangles == null || triangles.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    Color color = partColors[partIndex % partColors.Length];
+                    string colorName = partIndex < partColors.Length
+                        ? new[] { "Red", "Green", "Blue", "Yellow", "Orange", "Purple", "Cyan", "Pink" }[partIndex]
+                        : $"Color {partIndex}";
+
+                    legend.Add($"  {colorName} = {r.gameObject.name}");
+
+                    // Draw triangle edges
+                    for (int t = 0; t < triangles.Length; t += 3)
+                    {
+                        int i0 = triangles[t], i1 = triangles[t + 1], i2 = triangles[t + 2];
+                        if (i0 >= uvs.Length || i1 >= uvs.Length || i2 >= uvs.Length) continue;
+
+                        DrawLineUV(template, uvs[i0], uvs[i1], templateSize, color);
+                        DrawLineUV(template, uvs[i1], uvs[i2], templateSize, color);
+                        DrawLineUV(template, uvs[i2], uvs[i0], templateSize, color);
+                    }
+
+                    partIndex++;
+                }
+
+                if (partIndex == 0)
+                {
+                    Object.Destroy(template);
+                    return;
+                }
+
+                template.Apply();
+                byte[] pngData = EncodeToPngManual(template);
+                Object.Destroy(template);
+
+                var outputPath = Path.Combine(dumpDir, $"{charName}_uv_template.png");
+                File.WriteAllBytes(outputPath, pngData);
+
+                var legendPath = Path.Combine(dumpDir, $"{charName}_uv_legend.txt");
+                File.WriteAllText(legendPath, $"UV Template Legend - {charName}\n\n" + string.Join("\n", legend) + "\n");
+
+            }
+            catch (Exception ex)
+            {
+                Melon<CharacterSelectMod>.Logger.Error($"ExportUVTemplate error: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        /// <summary>Draw a line between two UV coordinates using Bresenham's algorithm.</summary>
+        private static void DrawLineUV(Texture2D tex, Vector2 uv0, Vector2 uv1, int size, Color color)
+        {
+            int x0 = (int)(uv0.x * (size - 1));
+            int y0 = (int)(uv0.y * (size - 1));
+            int x1 = (int)(uv1.x * (size - 1));
+            int y1 = (int)(uv1.y * (size - 1));
+
+            // Clamp to texture bounds
+            x0 = Math.Clamp(x0, 0, size - 1); y0 = Math.Clamp(y0, 0, size - 1);
+            x1 = Math.Clamp(x1, 0, size - 1); y1 = Math.Clamp(y1, 0, size - 1);
+
+            int dx = Math.Abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+            int dy = -Math.Abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+            int err = dx + dy;
+
+            while (true)
+            {
+                tex.SetPixel(x0, y0, color);
+                if (x0 == x1 && y0 == y1) break;
+                int e2 = 2 * err;
+                if (e2 >= dy) { err += dy; x0 += sx; }
+                if (e2 <= dx) { err += dx; y0 += sy; }
+            }
+        }
+
+        private void ScheduleReskin(int characterId, string skinPath)
+        {
+            _pendingReskinCharacterId = characterId;
+            _pendingReskinPath = skinPath;
+            _reskinApplyTime = Time.time + 0.5f;
+        }
+
+        // Maps skin prefix → base model key (for UV template dedup and reskin grouping)
+        private static readonly Dictionary<string, string> SkinPrefixToModelKey = new()
+        {
+            { "Skin_Frog", "frog" },
+            { "Skin_Penguin", "penguin" },
+            { "Skin_Seal", "seal" },
+            { "Skin_Bear_Brown", "bear" },
+            { "Skin_Bear_Polar", "bear" },
+            { "Skin_Bear_Black", "bear" },
+            { "Skin_Toad", "toad" },
+            { "Skin_Fox", "fox" },
+            { "Skin_Panda", "panda" },
+        };
+
+        private static string GetModelKey(string skinPrefix)
+        {
+            return SkinPrefixToModelKey.TryGetValue(skinPrefix, out var key)
+                ? key
+                : skinPrefix.Replace("Skin_", "").ToLower();
+        }
+
+        // Maps GameId to the material name prefix used by that character's skin
+        private static readonly Dictionary<int, string> CharacterSkinMaterials = new()
+        {
+            { 1, "Skin_Frog" },           // Frog
+            { 2, "Skin_Penguin" },         // Penguin
+            { 3, "Skin_Seal" },            // Harbor Seal
+            { 5, "Skin_Bear_Brown" },      // Brown Bear
+            { 6, "Skin_Bear_Polar" },      // Polar Bear
+            { 7, "Skin_Bear_Black" },      // Black Bear
+            { 8, "Skin_Seal" },            // Ringed Seal
+            { 9, "Skin_Seal" },            // Baikal Seal
+            { 10, "Skin_Frog" },           // Strawberry Frog
+            { 11, "Skin_Frog" },           // Tree Frog
+            { 12, "Skin_Toad" },           // Orange Toad
+            { 13, "Skin_Toad" },           // Brown Toad
+            { 14, "Skin_Fox" },            // Orange Fox
+            { 15, "Skin_Fox" },            // Arctic Fox
+            { 16, "Skin_Panda" },          // Panda
+        };
+
+        private void DeployEmbeddedReskins()
+        {
+            try
+            {
+                var modsDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                var reskinsDir = Path.Combine(modsDir, "reskins");
+                var assembly = Assembly.GetExecutingAssembly();
+                var prefix = "CharacterSelect.Assets.reskins.";
+
+                foreach (var resourceName in assembly.GetManifestResourceNames())
+                {
+                    if (!resourceName.StartsWith(prefix)) continue;
+
+                    // Convert resource name to file path: CharacterSelect.Assets.reskins.panda.sunburned_panda.json → panda/sunburned_panda.json
+                    var relativeParts = resourceName.Substring(prefix.Length);
+                    // First segment is the character folder, rest is the filename
+                    var dotIndex = relativeParts.IndexOf('.');
+                    if (dotIndex < 0) continue;
+
+                    // Find the last dot that separates filename from extension
+                    var lastDot = relativeParts.LastIndexOf('.');
+                    var ext = relativeParts.Substring(lastDot); // e.g. ".json" or ".png"
+
+                    // Everything between prefix removal and extension, with first dot as path separator
+                    var pathPart = relativeParts.Substring(0, lastDot);
+                    var charFolder = pathPart.Substring(0, dotIndex);
+                    var fileName = pathPart.Substring(dotIndex + 1) + ext;
+
+                    var targetDir = Path.Combine(reskinsDir, charFolder);
+                    var targetPath = Path.Combine(targetDir, fileName);
+
+                    if (File.Exists(targetPath)) continue; // Don't overwrite user modifications
+
+                    Directory.CreateDirectory(targetDir);
+                    using (var stream = assembly.GetManifestResourceStream(resourceName))
+                    {
+                        if (stream == null) continue;
+                        var data = new byte[stream.Length];
+                        stream.Read(data, 0, data.Length);
+                        File.WriteAllBytes(targetPath, data);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Melon<CharacterSelectMod>.Logger.Error($"Error deploying embedded reskins: {ex.Message}");
+            }
+        }
+
+        private void ScanForReskins()
+        {
+            var modsDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            _reskinsDir = Path.Combine(modsDir, "reskins");
+
+            if (!Directory.Exists(_reskinsDir))
+            {
+                Directory.CreateDirectory(_reskinsDir);
+                return;
+            }
+
+            // Scan subdirectories: reskins/{character_name}/{skin_name}.png|.json
+            foreach (var charDir in Directory.GetDirectories(_reskinsDir))
+            {
+                var charKey = Path.GetFileName(charDir).ToLower();
+                var skins = new List<SkinEntry>();
+
+                foreach (var file in Directory.GetFiles(charDir))
+                {
+                    var ext = Path.GetExtension(file).ToLower();
+                    var skinName = Path.GetFileNameWithoutExtension(file);
+
+                    // Skip icon files and generated cache files
+                    if (skinName.EndsWith("_icon", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (skinName.EndsWith("_generated", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    if (ext == ".json")
+                    {
+                        // JSON procedural skin
+                        var cachePath = Path.Combine(charDir, skinName + "_generated.png");
+                        bool needsGen = true;
+                        if (File.Exists(cachePath))
+                        {
+                            // Regenerate if JSON is newer than cached PNG
+                            var jsonTime = File.GetLastWriteTimeUtc(file);
+                            var cacheTime = File.GetLastWriteTimeUtc(cachePath);
+                            needsGen = jsonTime > cacheTime;
+                        }
+
+                        string iconPath = null;
+                        foreach (var iconExt in new[] { ".png", ".jpg", ".bmp" })
+                        {
+                            var candidate = Path.Combine(charDir, skinName + "_icon" + iconExt);
+                            if (File.Exists(candidate)) { iconPath = candidate; break; }
+                        }
+
+                        var displayName = string.Join(" ",
+                            skinName.Split('_').Select(w => w.Length > 0 ? char.ToUpper(w[0]) + w.Substring(1) : w));
+
+                        skins.Add(new SkinEntry
+                        {
+                            DisplayName = displayName,
+                            FilePath = cachePath,
+                            IconPath = iconPath,
+                            NeedsGeneration = needsGen,
+                            JsonPath = file
+                        });
+                    }
+                    else if (ext == ".png" || ext == ".jpg" || ext == ".bmp")
+                    {
+                        // Image-based skin
+                        string iconPath = null;
+                        foreach (var iconExt in new[] { ".png", ".jpg", ".bmp" })
+                        {
+                            var candidate = Path.Combine(charDir, skinName + "_icon" + iconExt);
+                            if (File.Exists(candidate)) { iconPath = candidate; break; }
+                        }
+
+                        var displayName = string.Join(" ",
+                            skinName.Split('_').Select(w => w.Length > 0 ? char.ToUpper(w[0]) + w.Substring(1) : w));
+
+                        skins.Add(new SkinEntry { DisplayName = displayName, FilePath = file, IconPath = iconPath });
+                    }
+                }
+
+                if (skins.Count > 0)
+                    _availableSkins[charKey] = skins;
+            }
+
+            // Also support legacy flat files: reskins/{character}_skin.* (backward compat)
+            foreach (var file in Directory.GetFiles(_reskinsDir, "*_skin.*"))
+            {
+                var ext = Path.GetExtension(file).ToLower();
+                if (ext != ".png" && ext != ".jpg" && ext != ".bmp") continue;
+
+                var nameWithoutExt = Path.GetFileNameWithoutExtension(file);
+                if (!nameWithoutExt.EndsWith("_skin")) continue;
+                var charKey = nameWithoutExt.Substring(0, nameWithoutExt.Length - 5);
+
+                if (!_availableSkins.ContainsKey(charKey))
+                    _availableSkins[charKey] = new List<SkinEntry>();
+
+                var displayName = string.Join(" ",
+                    charKey.Split('_').Select(w => w.Length > 0 ? char.ToUpper(w[0]) + w.Substring(1) : w)) + " (Custom)";
+
+                _availableSkins[charKey].Add(new SkinEntry { DisplayName = displayName, FilePath = file });
+            }
+
+            int totalSkins = _availableSkins.Values.Sum(s => s.Count);
+            Melon<CharacterSelectMod>.Logger.Msg($"Found {totalSkins} custom skin(s) for {_availableSkins.Count} character(s)");
+        }
+
+        private string GetCharacterReskinKey(int characterId)
+        {
+            // Use model key so skins are shared across variants (e.g. all bears share "bear")
+            if (CharacterSkinMaterials.TryGetValue(characterId, out var prefix))
+                return GetModelKey(prefix);
+            return GetCharacterName(characterId).ToLower().Replace(" ", "_");
+        }
+
+        private Texture2D GenerateProceduralSkin(Texture2D original, string jsonPath)
+        {
+            try
+            {
+                var json = File.ReadAllText(jsonPath);
+                var definition = JsonSerializer.Deserialize<SkinDefinition>(json);
+                if (definition?.Transforms == null || definition.Transforms.Count == 0)
+                {
+                    Melon<CharacterSelectMod>.Logger.Warning($"Procedural skin has no transforms: {jsonPath}");
+                    return null;
+                }
+
+                // Make sure we have a readable copy
+                Texture2D src = original.isReadable ? original : CopyTextureToReadable(original);
+                int w = src.width, h = src.height;
+                var result = new Texture2D(w, h, TextureFormat.RGBA32, false);
+
+                int totalPixels = w * h;
+                int lastLogPercent = 0;
+
+                for (int y = 0; y < h; y++)
+                {
+                    for (int x = 0; x < w; x++)
+                    {
+                        Color c = src.GetPixel(x, y);
+                        // Compute brightness from original (luminance)
+                        float brightness = 0.299f * c.r + 0.587f * c.g + 0.114f * c.b;
+
+                        Color modified = c;
+                        foreach (var transform in definition.Transforms)
+                        {
+                            if (transform.Where != null)
+                            {
+                                if (brightness < transform.Where.BrightnessMin || brightness > transform.Where.BrightnessMax)
+                                    continue;
+                            }
+
+                            float blend = Math.Clamp(transform.Blend, 0f, 1f);
+
+                            switch (transform.Action?.ToLower())
+                            {
+                                case "recolor":
+                                    if (transform.Color is { Length: >= 3 })
+                                    {
+                                        var target = new Color(transform.Color[0], transform.Color[1], transform.Color[2], modified.a);
+                                        modified = new Color(
+                                            modified.r + (target.r - modified.r) * blend,
+                                            modified.g + (target.g - modified.g) * blend,
+                                            modified.b + (target.b - modified.b) * blend,
+                                            modified.a);
+                                    }
+                                    break;
+
+                                case "tint":
+                                    if (transform.Color is { Length: >= 3 })
+                                    {
+                                        var tinted = new Color(
+                                            modified.r * transform.Color[0],
+                                            modified.g * transform.Color[1],
+                                            modified.b * transform.Color[2],
+                                            modified.a);
+                                        modified = new Color(
+                                            modified.r + (tinted.r - modified.r) * blend,
+                                            modified.g + (tinted.g - modified.g) * blend,
+                                            modified.b + (tinted.b - modified.b) * blend,
+                                            modified.a);
+                                    }
+                                    break;
+
+                                case "hue_shift":
+                                    RgbToHsv(modified.r, modified.g, modified.b, out float hue, out float sat, out float val);
+                                    hue = (hue + transform.Degrees * blend / 360f) % 1f;
+                                    if (hue < 0) hue += 1f;
+                                    HsvToRgb(hue, sat, val, out float nr, out float ng, out float nb);
+                                    modified = new Color(nr, ng, nb, modified.a);
+                                    break;
+                            }
+                        }
+
+                        result.SetPixel(x, y, modified);
+                    }
+
+                    // Log progress at 25% intervals
+                    int percent = (int)((y + 1) * 100f / h);
+                    if (percent >= lastLogPercent + 25)
+                    {
+                        lastLogPercent = (percent / 25) * 25;
+                    }
+                }
+
+                result.Apply();
+
+                if (!original.isReadable && src != original)
+                    Object.Destroy(src);
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                Melon<CharacterSelectMod>.Logger.Error($"GenerateProceduralSkin error: {ex.Message}\n{ex.StackTrace}");
+                return null;
+            }
+        }
+
+        // Pure-math HSV helpers (no Il2Cpp dependency)
+        private static void RgbToHsv(float r, float g, float b, out float h, out float s, out float v)
+        {
+            float max = Math.Max(r, Math.Max(g, b));
+            float min = Math.Min(r, Math.Min(g, b));
+            float delta = max - min;
+
+            v = max;
+            s = max > 0 ? delta / max : 0;
+
+            if (delta == 0) { h = 0; return; }
+
+            if (max == r) h = (g - b) / delta;
+            else if (max == g) h = 2 + (b - r) / delta;
+            else h = 4 + (r - g) / delta;
+
+            h /= 6f;
+            if (h < 0) h += 1f;
+        }
+
+        private static void HsvToRgb(float h, float s, float v, out float r, out float g, out float b)
+        {
+            if (s == 0) { r = g = b = v; return; }
+
+            h *= 6f;
+            int i = (int)Math.Floor(h);
+            float f = h - i;
+            float p = v * (1 - s);
+            float q = v * (1 - s * f);
+            float t = v * (1 - s * (1 - f));
+
+            switch (i % 6)
+            {
+                case 0: r = v; g = t; b = p; return;
+                case 1: r = q; g = v; b = p; return;
+                case 2: r = p; g = v; b = t; return;
+                case 3: r = p; g = q; b = v; return;
+                case 4: r = t; g = p; b = v; return;
+                default: r = v; g = p; b = q; return;
+            }
+        }
+
+        private void ApplyReskin(int characterId, string skinPath)
+        {
+            try
+            {
+                var playerObj = GameObject.Find("Player Networked(Clone)");
+                if (playerObj == null) return;
+
+                CharacterSkinMaterials.TryGetValue(characterId, out var skinPrefix);
+
+                var renderers = playerObj.GetComponentsInChildren<SkinnedMeshRenderer>();
+
+                // If no custom skin, restore original texture
+                if (string.IsNullOrEmpty(skinPath))
+                {
+                    if (_originalSkinTextures.TryGetValue(characterId, out var origTex) && origTex != null)
+                    {
+                        int restored = 0;
+                        foreach (var r in renderers)
+                        {
+                            if (r == null) continue;
+                            var mat = r.material;
+                            if (mat == null) continue;
+                            var shaderName = mat.shader?.name;
+                            if (shaderName == null || shaderName == "Standard" || shaderName.Contains("Eyes")) continue;
+                            var matName = mat.name ?? "";
+                            if (skinPrefix != null && !matName.StartsWith(skinPrefix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                            if (mat.HasProperty("_BaseMap")) { mat.SetTexture("_BaseMap", origTex); restored++; }
+                            if (mat.HasProperty("_MainTex")) mat.SetTexture("_MainTex", origTex);
+                        }
+                    }
+                    return;
+                }
+
+                // Check if this is a procedural (JSON) skin that needs generation
+                SkinEntry? matchingEntry = FindSkinEntry(skinPath);
+                if (matchingEntry != null && matchingEntry.Value.NeedsGeneration && matchingEntry.Value.JsonPath != null)
+                {
+
+                    // Get original texture
+                    var origTex2D = GetOriginalTexture(characterId);
+                    if (origTex2D == null)
+                    {
+                        // Try to capture it from current renderers
+                        foreach (var r in renderers)
+                        {
+                            if (r == null) continue;
+                            var mat = r.material;
+                            if (mat == null) continue;
+                            var sn = mat.shader?.name;
+                            if (sn == null || sn == "Standard" || sn.Contains("Eyes")) continue;
+                            var mn = mat.name ?? "";
+                            if (skinPrefix != null && !mn.StartsWith(skinPrefix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                            Texture tex = null;
+                            if (mat.HasProperty("_BaseMap")) tex = mat.GetTexture("_BaseMap");
+                            else if (mat.HasProperty("_MainTex")) tex = mat.GetTexture("_MainTex");
+
+                            if (tex != null)
+                            {
+                                _originalSkinTextures[characterId] = tex;
+                                origTex2D = tex.TryCast<Texture2D>();
+                                break;
+                            }
+                        }
+                    }
+
+                    if (origTex2D != null)
+                    {
+                        var generated = GenerateProceduralSkin(origTex2D, matchingEntry.Value.JsonPath);
+                        if (generated != null)
+                        {
+                            // Cache the generated texture in PNG and save to disk
+                            byte[] pngData = EncodeToPngManual(generated);
+                            File.WriteAllBytes(skinPath, pngData);
+
+                            _skinTextureCache[skinPath] = generated;
+
+                            // Mark entry as no longer needing generation
+                            MarkSkinGenerated(skinPath);
+                        }
+                    }
+                    else
+                    {
+                        Melon<CharacterSelectMod>.Logger.Warning("Cannot generate procedural skin: original texture not available");
+                    }
+                }
+
+                // Load custom skin texture
+                if (!_skinTextureCache.TryGetValue(skinPath, out var texture))
+                {
+                    texture = LoadReskinTexture(skinPath);
+                    if (texture != null) _skinTextureCache[skinPath] = texture;
+                }
+                if (texture == null) return;
+
+                int swapped = 0;
+                foreach (var r in renderers)
+                {
+                    if (r == null) continue;
+                    var mat = r.material;
+                    if (mat == null) continue;
+
+                    var shaderName = mat.shader?.name;
+                    if (shaderName == null || shaderName == "Standard") continue;
+                    if (shaderName.Contains("Eyes")) continue;
+
+                    var matName = mat.name ?? "";
+                    if (skinPrefix != null && !matName.StartsWith(skinPrefix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    // Save original texture before first swap
+                    if (!_originalSkinTextures.ContainsKey(characterId))
+                    {
+                        if (mat.HasProperty("_BaseMap"))
+                            _originalSkinTextures[characterId] = mat.GetTexture("_BaseMap");
+                        else if (mat.HasProperty("_MainTex"))
+                            _originalSkinTextures[characterId] = mat.GetTexture("_MainTex");
+                    }
+
+                    if (mat.HasProperty("_BaseMap"))
+                    {
+                        mat.SetTexture("_BaseMap", texture);
+                        swapped++;
+                    }
+                    if (mat.HasProperty("_MainTex"))
+                    {
+                        mat.SetTexture("_MainTex", texture);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Melon<CharacterSelectMod>.Logger.Error($"ApplyReskin error: {ex.Message}");
+            }
+        }
+
+        private Texture2D LoadReskinTexture(string filePath)
+        {
+            try
+            {
+                if (!File.Exists(filePath))
+                {
+                    Melon<CharacterSelectMod>.Logger.Warning($"Reskin file not found: {filePath}");
+                    return null;
+                }
+
+                byte[] data = File.ReadAllBytes(filePath);
+                var ext = Path.GetExtension(filePath).ToLower();
+
+                // BMP needs manual parsing (ImageConversion only supports PNG/JPG)
+                if (ext == ".bmp")
+                {
+                    var texture = LoadBmpData(data);
+                    if (texture == null)
+                        Melon<CharacterSelectMod>.Logger.Warning($"Failed to parse BMP: {filePath}");
+                    return texture;
+                }
+
+                // PNG/JPG — use Unity's built-in loader
+                var tex = new Texture2D(2, 2);
+                if (ImageConversion.LoadImage(tex, data))
+                {
+                    return tex;
+                }
+                else
+                {
+                    Melon<CharacterSelectMod>.Logger.Warning($"Failed to load reskin image: {filePath}");
+                    return null;
+                }
+            }
+            catch (Exception ex)
+            {
+                Melon<CharacterSelectMod>.Logger.Error($"Error loading reskin texture {filePath}: {ex.Message}");
+                return null;
+            }
+        }
+
+        private Texture2D LoadBmpData(byte[] data)
+        {
+            if (data.Length < 54 || data[0] != 0x42 || data[1] != 0x4D)
+                return null;
+
+            int pixelOffset = BitConverter.ToInt32(data, 10);
+            int width = BitConverter.ToInt32(data, 18);
+            int height = BitConverter.ToInt32(data, 22);
+            int bpp = BitConverter.ToInt16(data, 28);
+
+            if (bpp != 32 || width <= 0 || height <= 0)
+            {
+                Melon<CharacterSelectMod>.Logger.Warning($"BMP loader only supports 32bpp, got {bpp}bpp ({width}x{height})");
+                return null;
+            }
+
+            var texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
+
+            // BMP pixel data is bottom-up, BGRA order
+            int stride = width * 4;
+            for (int y = 0; y < height; y++)
+            {
+                int rowStart = pixelOffset + y * stride;
+                for (int x = 0; x < width; x++)
+                {
+                    int i = rowStart + x * 4;
+                    float b = data[i] / 255f;
+                    float g = data[i + 1] / 255f;
+                    float r = data[i + 2] / 255f;
+                    float a = data[i + 3] / 255f;
+                    texture.SetPixel(x, y, new Color(r, g, b, a));
+                }
+            }
+            texture.Apply();
+            return texture;
+        }
+
+        private SkinEntry? FindSkinEntry(string filePath)
+        {
+            foreach (var kvp in _availableSkins)
+            {
+                for (int i = 0; i < kvp.Value.Count; i++)
+                {
+                    if (kvp.Value[i].FilePath == filePath)
+                        return kvp.Value[i];
+                }
+            }
+            return null;
+        }
+
+        private void MarkSkinGenerated(string filePath)
+        {
+            foreach (var kvp in _availableSkins)
+            {
+                for (int i = 0; i < kvp.Value.Count; i++)
+                {
+                    if (kvp.Value[i].FilePath == filePath)
+                    {
+                        var entry = kvp.Value[i];
+                        entry.NeedsGeneration = false;
+                        kvp.Value[i] = entry;
+                        return;
+                    }
+                }
             }
         }
 
