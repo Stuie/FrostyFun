@@ -40,6 +40,21 @@ Quick character switching via a visual UI, with custom skins support.
 |-----|--------|
 | F6 | Open/close character selection UI |
 
+### PushToTalk
+
+Adds push-to-talk functionality to the Dissonance VOIP system.
+
+**Features:**
+- Hold V to unmute your microphone (mutes again on release)
+- Automatically hooks into the Dissonance voice system
+- Syncs the in-game voice toggle UI to reflect mute state
+
+**Controls:**
+| Key | Action |
+|-----|--------|
+| V (hold) | Push-to-talk (unmutes while held) |
+| F9 | Dump Dissonance voice system info to log |
+
 ### TestMod
 
 Minimal developer utility for verifying MelonLoader is working. Logs a message on pressing F7, no gameplay features.
@@ -82,6 +97,9 @@ cp MenuQOL/bin/Release/net6.0/MenuQOL.dll "C:\Program Files (x86)\Steam\steamapp
 
 # CharacterSelect
 cp CharacterSelect/bin/Release/net6.0/CharacterSelect.dll "C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\"
+
+# PushToTalk
+cp PushToTalk/bin/Release/net6.0/PushToTalk.dll "C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\"
 ```
 
 ## First-Time Setup
