@@ -100,6 +100,9 @@ cp CharacterSelect/bin/Release/net6.0/CharacterSelect.dll "C:\Program Files (x86
 
 # PushToTalk
 cp PushToTalk/bin/Release/net6.0/PushToTalk.dll "C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\"
+
+# YetiHunt
+cp YetiHunt/bin/Release/net6.0/YetiHunt.dll "C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\"
 ```
 
 ## First-Time Setup
