@@ -35,6 +35,9 @@ FrostyFun/
 │   ├── Players/               # Player tracking and teleportation
 │   ├── UI/                    # HUD, minimap rendering
 │   └── Yeti/                  # Yeti spawning, AI behavior, movement
+├── RacePicker/                # Pick race route at shared start flag (F5 = UI, Ctrl+F5 = dump)
+│   ├── RacePicker.csproj
+│   └── RacePickerMod.cs
 ├── YetiHunt.Tests/            # Unit tests for YetiHunt
 │   ├── YetiHunt.Tests.csproj
 │   ├── GameStateMachineTests.cs
@@ -130,6 +133,8 @@ dotnet build PushToTalk/PushToTalk.csproj -c Release && cp 'PushToTalk/bin/Relea
 # YetiHunt
 dotnet build YetiHunt/YetiHunt.csproj -c Release && cp 'YetiHunt/bin/Release/net6.0/YetiHunt.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game\Mods\'
 
+# RacePicker
+dotnet build RacePicker/RacePicker.csproj -c Release && cp 'RacePicker/bin/Release/net6.0/RacePicker.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game\Mods\'
 ```
 
 ### Verify
