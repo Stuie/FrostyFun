@@ -105,30 +105,31 @@ dotnet build ModName/ModName.csproj -c Release
 
 ```bash
 # Build and deploy a mod (replace ModName with actual mod name)
-dotnet build ModName/ModName.csproj -c Release && cp 'ModName/bin/Release/net6.0/ModName.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\'
+dotnet build ModName/ModName.csproj -c Release && cp 'ModName/bin/Release/net6.0/ModName.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game\Mods\'
 ```
 
-**Game Path:** `C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo`
+**Game Path:** `C:\Program Files (x86)\Steam\steamapps\common\Sledding Game`
 
 #### Quick Deploy Commands
 ```bash
 # SnowmanMod
-dotnet build SnowmanMod/SnowmanMod.csproj -c Release && cp 'SnowmanMod/bin/Release/net6.0/SnowmanMod.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\'
+dotnet build SnowmanMod/SnowmanMod.csproj -c Release && cp 'SnowmanMod/bin/Release/net6.0/SnowmanMod.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game\Mods\'
 
 # MenuQOL
-dotnet build MenuQOL/MenuQOL.csproj -c Release && cp 'MenuQOL/bin/Release/net6.0/MenuQOL.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\'
+dotnet build MenuQOL/MenuQOL.csproj -c Release && cp 'MenuQOL/bin/Release/net6.0/MenuQOL.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game\Mods\'
 
 # TestMod
-dotnet build TestMod/TestMod.csproj -c Release && cp 'TestMod/bin/Release/net6.0/TestMod.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\'
+dotnet build TestMod/TestMod.csproj -c Release && cp 'TestMod/bin/Release/net6.0/TestMod.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game\Mods\'
 
 # CharacterSelect
-dotnet build CharacterSelect/CharacterSelect.csproj -c Release && cp 'CharacterSelect/bin/Release/net6.0/CharacterSelect.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\'
+dotnet build CharacterSelect/CharacterSelect.csproj -c Release && cp 'CharacterSelect/bin/Release/net6.0/CharacterSelect.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game\Mods\'
 
 # PushToTalk
-dotnet build PushToTalk/PushToTalk.csproj -c Release && cp 'PushToTalk/bin/Release/net6.0/PushToTalk.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\'
+dotnet build PushToTalk/PushToTalk.csproj -c Release && cp 'PushToTalk/bin/Release/net6.0/PushToTalk.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game\Mods\'
 
 # YetiHunt
-dotnet build YetiHunt/YetiHunt.csproj -c Release && cp 'YetiHunt/bin/Release/net6.0/YetiHunt.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\'
+dotnet build YetiHunt/YetiHunt.csproj -c Release && cp 'YetiHunt/bin/Release/net6.0/YetiHunt.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game\Mods\'
+
 ```
 
 ### Verify
