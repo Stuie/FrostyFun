@@ -38,6 +38,11 @@ FrostyFun/
 ├── RacePicker/                # Pick race route at shared start flag (F5 = UI, Ctrl+F5 = dump)
 │   ├── RacePicker.csproj
 │   └── RacePickerMod.cs
+├── RespawnFlags/              # Quick teleport to spawn points (F8 = UI, CapsLock x2 = respawn)
+│   ├── RespawnFlags.csproj
+│   ├── RespawnFlagsMod.cs
+│   ├── Services/              # Teleport + spawn point management
+│   └── UI/                    # IMGUI spawn point picker
 ├── YetiHunt.Tests/            # Unit tests for YetiHunt
 │   ├── YetiHunt.Tests.csproj
 │   ├── GameStateMachineTests.cs
@@ -135,6 +140,9 @@ dotnet build YetiHunt/YetiHunt.csproj -c Release && cp 'YetiHunt/bin/Release/net
 
 # RacePicker
 dotnet build RacePicker/RacePicker.csproj -c Release && cp 'RacePicker/bin/Release/net6.0/RacePicker.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game\Mods\'
+
+# RespawnFlags
+dotnet build RespawnFlags/RespawnFlags.csproj -c Release && cp 'RespawnFlags/bin/Release/net6.0/RespawnFlags.dll' 'C:\Program Files (x86)\Steam\steamapps\common\Sledding Game\Mods\'
 ```
 
 ### Verify
