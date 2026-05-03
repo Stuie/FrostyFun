@@ -1,6 +1,6 @@
 # MenuQOL
 
-Menu quality-of-life improvements for Sledding Game Demo.
+Menu quality-of-life improvements for Sledding Game.
 
 ## Features
 
