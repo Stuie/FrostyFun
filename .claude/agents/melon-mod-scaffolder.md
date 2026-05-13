@@ -16,6 +16,18 @@ Game installation: `C:\Program Files (x86)\Steam\steamapps\common\Sledding Game 
 
 Create complete, buildable mod projects following the established patterns in the FrostyFun solution. Each new mod must integrate seamlessly with the existing build infrastructure.
 
+## FrostyFun.Shared (check this first!)
+
+Before designing the new mod, check `FrostyFun.Shared/README.md` for utilities the mod can reuse: `PlayerTeleporter`, `PlayerInputBlocker`, `Il2CppTypeResolver`, `GetIl2CppTypeName` extension, `TextureFactory`, `CursorTextures`, `CursorState`, `MelonLoggerAdapter`, `EmbeddedResourceLoader`.
+
+If the new mod needs any of these (and most non-trivial mods will), add **one line** to its `.csproj` and skip declaring the references those utilities need — the targets file provides them:
+
+```xml
+<Import Project="..\FrostyFun.Shared\FrostyFun.Shared.targets" />
+```
+
+If you find yourself about to write a method that another mod already has, lift it into `FrostyFun.Shared/` instead of duplicating it. The shared library is meant to grow; don't recreate IMGUI helpers, cursor management, player-input blocking, or Il2Cpp reflection scans that already exist there.
+
 ## Project Structure to Create
 
 For a new mod named `{ModName}`:
@@ -215,9 +227,12 @@ dotnet build {ModName}/{ModName}.csproj -c Release
 |----------|------------------------------|
 | Simple (no UI) | None - core modules only |
 | Game UI hooks | UI, UIModule, TextMeshPro |
-| Custom IMGUI overlay | IMGUIModule |
+| Custom IMGUI overlay | IMGUIModule, InputLegacyModule, TextRenderingModule |
 | Animations | AnimationModule |
-| Embedded images | ImageConversionModule |
+| Embedded images | (provided by FrostyFun.Shared.targets if you `<Import>` it) |
+| Networking / FishNet types | Il2CppFishNet.Runtime |
+
+If the mod imports `FrostyFun.Shared.targets`, references for `Il2CppInterop.Runtime`/`Common`, `Il2Cppmscorlib`, `UnityEngine.CoreModule`, and `UnityEngine.ImageConversionModule` are inherited automatically — don't redeclare them in the mod's csproj.
 
 ## Quality Checklist
 
@@ -228,3 +243,4 @@ Before completing:
 - [ ] Logger uses `Melon<ClassName>.Logger` pattern
 - [ ] README has accurate keybinding documentation
 - [ ] Project builds without errors
+- [ ] Checked `FrostyFun.Shared/README.md` — reused existing utilities where applicable, didn't duplicate IMGUI/teleport/input-blocking helpers

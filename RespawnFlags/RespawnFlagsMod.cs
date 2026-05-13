@@ -3,6 +3,10 @@ using UnityEngine;
 using System;
 using System.Linq;
 using System.Reflection;
+using FrostyFun.Shared.Il2Cpp;
+using FrostyFun.Shared.Logging;
+using FrostyFun.Shared.Players;
+using FrostyFun.Shared.UI;
 using RespawnFlags.Services;
 using RespawnFlags.UI;
 using Object = UnityEngine.Object;
@@ -11,21 +15,13 @@ namespace RespawnFlags
 {
     public class RespawnFlagsMod : MelonMod
     {
-        private TeleportService _teleportService;
+        private PlayerTeleporter _teleporter;
         private SpawnPointService _spawnPointService;
         private RespawnUI _ui;
+        private PlayerInputBlocker _inputBlocker;
 
         private string _currentScene = "";
-
-        // Cursor state backup
-        private bool _previousCursorVisible;
-        private CursorLockMode _previousLockState;
-
-        // Components to disable while UI is open
-        private Component _playerLocalInput;
-        private Component _playerCameraControl;
-        private bool _playerLocalInputWasEnabled;
-        private bool _playerCameraControlWasEnabled;
+        private CursorSnapshot _cursorSnapshot;
 
         // CapsLock double-tap detection
         private float _lastCapsLockTime = 0f;
@@ -33,9 +29,12 @@ namespace RespawnFlags
 
         public override void OnInitializeMelon()
         {
-            _teleportService = new TeleportService(Melon<RespawnFlagsMod>.Logger);
+            var logger = new MelonLoggerAdapter(Melon<RespawnFlagsMod>.Logger);
+            var typeResolver = new Il2CppTypeResolver(logger);
+            _teleporter = new PlayerTeleporter(logger, typeResolver);
             _spawnPointService = new SpawnPointService(Melon<RespawnFlagsMod>.Logger);
             _ui = new RespawnUI();
+            _inputBlocker = new PlayerInputBlocker(logger);
 
             _spawnPointService.LoadHistory();
 
@@ -48,8 +47,7 @@ namespace RespawnFlags
         {
             _currentScene = sceneName;
             if (_ui.IsVisible) CloseUI();
-            _playerLocalInput = null;
-            _playerCameraControl = null;
+            _inputBlocker.Reset();
             _spawnPointService.Reset();
             Melon<RespawnFlagsMod>.Logger.Msg($"Scene loaded: {sceneName}");
         }
@@ -98,7 +96,7 @@ namespace RespawnFlags
                     var lastPoint = _spawnPointService.GetQuickRespawnPoint();
                     if (lastPoint != null)
                     {
-                        _teleportService.TeleportTo(lastPoint.Value.Position);
+                        _teleporter.TeleportTo(lastPoint.Value.Position, Quaternion.identity, leaveRaceFirst: true);
                         Melon<RespawnFlagsMod>.Logger.Msg($"Quick respawn: {lastPoint.Value.Name}");
                     }
                     _lastCapsLockTime = 0f;
@@ -113,11 +111,7 @@ namespace RespawnFlags
         public override void OnLateUpdate()
         {
             if (_ui.IsVisible)
-            {
-                Cursor.visible = true;
-                Cursor.lockState = CursorLockMode.None;
-                Cursor.SetCursor(null, Vector2.zero, CursorMode.Auto);
-            }
+                CursorState.ShowFree();
         }
 
         public override void OnGUI()
@@ -141,7 +135,7 @@ namespace RespawnFlags
 
         private void OnSpawnPointSelected(SpawnPoint point)
         {
-            _teleportService.TeleportTo(point.Position);
+            _teleporter.TeleportTo(point.Position, Quaternion.identity, leaveRaceFirst: true);
             _spawnPointService.SetLastUsedPoint(point);
             CloseUI();
         }
@@ -251,143 +245,17 @@ namespace RespawnFlags
 
         private void OpenUI()
         {
-            _previousCursorVisible = Cursor.visible;
-            _previousLockState = Cursor.lockState;
-
-            Cursor.visible = true;
-            Cursor.lockState = CursorLockMode.None;
-
-            DisablePlayerInput();
+            _cursorSnapshot = CursorState.Snapshot();
+            CursorState.ShowFree();
+            _inputBlocker.Disable();
             _ui.Open();
         }
 
         private void CloseUI()
         {
-            EnablePlayerInput();
-
-            Cursor.visible = _previousCursorVisible;
-            Cursor.lockState = _previousLockState;
-
+            _inputBlocker.Restore();
+            CursorState.Restore(_cursorSnapshot);
             _ui.Close();
-        }
-
-        private void DisablePlayerInput()
-        {
-            try
-            {
-                var playerInputObj = GameObject.Find("Player Input");
-                if (playerInputObj != null)
-                {
-                    var components = playerInputObj.GetComponents<Component>();
-                    foreach (var comp in components)
-                    {
-                        if (comp != null && GetIl2CppTypeName(comp) == "PlayerLocalInput")
-                        {
-                            _playerLocalInput = comp;
-                            var behaviour = comp.TryCast<Behaviour>();
-                            if (behaviour != null)
-                            {
-                                _playerLocalInputWasEnabled = behaviour.enabled;
-                                behaviour.enabled = false;
-                            }
-                            break;
-                        }
-                    }
-                }
-
-                var playerObj = GameObject.Find("Player Networked(Clone)");
-                if (playerObj != null)
-                {
-                    var components = playerObj.GetComponents<Component>();
-                    foreach (var comp in components)
-                    {
-                        if (comp != null && GetIl2CppTypeName(comp) == "PlayerCameraControl")
-                        {
-                            _playerCameraControl = comp;
-                            var behaviour = comp.TryCast<Behaviour>();
-                            if (behaviour != null)
-                            {
-                                _playerCameraControlWasEnabled = behaviour.enabled;
-                                behaviour.enabled = false;
-                            }
-                            break;
-                        }
-                    }
-                }
-
-                var cinemachineObj = GameObject.Find("CinemachineCamera (makes parent null on start)");
-                if (cinemachineObj != null)
-                {
-                    var components = cinemachineObj.GetComponents<Component>();
-                    foreach (var comp in components)
-                    {
-                        string typeName = GetIl2CppTypeName(comp);
-                        if (typeName.Contains("Cinemachine") || typeName.Contains("Input"))
-                        {
-                            var behaviour = comp.TryCast<Behaviour>();
-                            if (behaviour != null && behaviour.enabled)
-                                behaviour.enabled = false;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Melon<RespawnFlagsMod>.Logger.Warning($"Error disabling input: {ex.Message}");
-            }
-        }
-
-        private void EnablePlayerInput()
-        {
-            try
-            {
-                if (_playerLocalInput != null)
-                {
-                    var behaviour = _playerLocalInput.TryCast<Behaviour>();
-                    if (behaviour != null)
-                        behaviour.enabled = _playerLocalInputWasEnabled;
-                }
-
-                if (_playerCameraControl != null)
-                {
-                    var behaviour = _playerCameraControl.TryCast<Behaviour>();
-                    if (behaviour != null)
-                        behaviour.enabled = _playerCameraControlWasEnabled;
-                }
-
-                var cinemachineObj = GameObject.Find("CinemachineCamera (makes parent null on start)");
-                if (cinemachineObj != null)
-                {
-                    var components = cinemachineObj.GetComponents<Component>();
-                    foreach (var comp in components)
-                    {
-                        string typeName = GetIl2CppTypeName(comp);
-                        if (typeName.Contains("Cinemachine") || typeName.Contains("Input"))
-                        {
-                            var behaviour = comp.TryCast<Behaviour>();
-                            if (behaviour != null)
-                                behaviour.enabled = true;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Melon<RespawnFlagsMod>.Logger.Warning($"Error enabling input: {ex.Message}");
-            }
-        }
-
-        private static string GetIl2CppTypeName(Component comp)
-        {
-            try
-            {
-                var il2cppType = comp.GetIl2CppType();
-                return il2cppType?.Name ?? comp.GetType().Name;
-            }
-            catch
-            {
-                return comp.GetType().Name;
-            }
         }
     }
 }

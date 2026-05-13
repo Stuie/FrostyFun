@@ -1,0 +1,54 @@
+<Project>
+    <!--
+        FrostyFun.Shared consumption file.
+
+        A mod opts into FrostyFun.Shared by adding ONE line to its .csproj:
+            <Import Project="..\FrostyFun.Shared\FrostyFun.Shared.targets" />
+
+        That import pulls in:
+          - the shared C# source files (compiled directly into the consuming mod's DLL)
+          - the game/Unity references those source files need
+
+        Result: the mod ships as a single self-contained DLL with the shared types
+        compiled in, and no FrostyFun.Shared.dll exists at runtime. Different mods
+        get private, independent copies of the shared types in their own assemblies,
+        so version conflicts between mods are impossible by construction.
+    -->
+
+    <PropertyGroup>
+        <!-- Root of the FrostyFun.Shared directory, regardless of where this file is imported from. -->
+        <FrostyFunSharedDir>$(MSBuildThisFileDirectory)</FrostyFunSharedDir>
+    </PropertyGroup>
+
+    <!-- Shared source files compiled into the consumer's assembly. -->
+    <ItemGroup>
+        <Compile Include="$(FrostyFunSharedDir)**\*.cs"
+                 Exclude="$(FrostyFunSharedDir)bin\**\*.*;$(FrostyFunSharedDir)obj\**\*.*"
+                 Link="Shared\%(RecursiveDir)%(Filename)%(Extension)" />
+    </ItemGroup>
+
+    <!-- References the shared source code needs. Consumers don't have to declare these.
+         If the consumer's own .csproj happens to declare the same reference, MSBuild dedupes. -->
+    <ItemGroup>
+        <Reference Include="Il2CppInterop.Runtime" Condition="'@(Reference->AnyHaveMetadataValue('Identity', 'Il2CppInterop.Runtime'))' != 'true'">
+            <HintPath>$(GamePath)\MelonLoader\net6\Il2CppInterop.Runtime.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Il2CppInterop.Common" Condition="'@(Reference->AnyHaveMetadataValue('Identity', 'Il2CppInterop.Common'))' != 'true'">
+            <HintPath>$(GamePath)\MelonLoader\net6\Il2CppInterop.Common.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Il2Cppmscorlib" Condition="'@(Reference->AnyHaveMetadataValue('Identity', 'Il2Cppmscorlib'))' != 'true'">
+            <HintPath>$(GamePath)\MelonLoader\Il2CppAssemblies\Il2Cppmscorlib.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="UnityEngine.CoreModule" Condition="'@(Reference->AnyHaveMetadataValue('Identity', 'UnityEngine.CoreModule'))' != 'true'">
+            <HintPath>$(GamePath)\MelonLoader\Il2CppAssemblies\UnityEngine.CoreModule.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="UnityEngine.ImageConversionModule" Condition="'@(Reference->AnyHaveMetadataValue('Identity', 'UnityEngine.ImageConversionModule'))' != 'true'">
+            <HintPath>$(GamePath)\MelonLoader\Il2CppAssemblies\UnityEngine.ImageConversionModule.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+    </ItemGroup>
+</Project>

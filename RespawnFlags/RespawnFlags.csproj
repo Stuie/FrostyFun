@@ -8,7 +8,7 @@
         <GamePath Condition="'$(GamePath)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Sledding Game</GamePath>
 
         <!-- Mod metadata for MelonLoader -->
-        <Version>1.0.0</Version>
+        <Version>1.0.1</Version>
         <ModClassName>RespawnFlags.RespawnFlagsMod</ModClassName>
         <ModDisplayName>Respawn Flags</ModDisplayName>
     </PropertyGroup>
@@ -17,24 +17,15 @@
         <PackageReference Include="LavaGang.MelonLoader" Version="0.7.2" />
     </ItemGroup>
 
+    <!-- Pull in FrostyFun.Shared source code + the references it needs.
+         Source compiles directly into this mod's DLL; no separate Shared.dll at runtime. -->
+    <Import Project="..\FrostyFun.Shared\FrostyFun.Shared.targets" />
+
     <!-- Reference local MelonLoader assemblies -->
     <ItemGroup>
-        <Reference Include="Il2CppInterop.Runtime">
-            <HintPath>$(GamePath)\MelonLoader\net6\Il2CppInterop.Runtime.dll</HintPath>
-            <Private>false</Private>
-        </Reference>
-        <Reference Include="Il2CppInterop.Common">
-            <HintPath>$(GamePath)\MelonLoader\net6\Il2CppInterop.Common.dll</HintPath>
-            <Private>false</Private>
-        </Reference>
-        <Reference Include="Il2Cppmscorlib">
-            <HintPath>$(GamePath)\MelonLoader\Il2CppAssemblies\Il2Cppmscorlib.dll</HintPath>
-            <Private>false</Private>
-        </Reference>
-        <Reference Include="UnityEngine.CoreModule">
-            <HintPath>$(GamePath)\MelonLoader\Il2CppAssemblies\UnityEngine.CoreModule.dll</HintPath>
-            <Private>false</Private>
-        </Reference>
+        <!-- Mod-specific references. Common refs (Il2CppInterop, Il2Cppmscorlib,
+             UnityEngine.CoreModule, UnityEngine.ImageConversionModule) are provided
+             by FrostyFun.Shared.targets above. -->
         <Reference Include="UnityEngine.InputLegacyModule">
             <HintPath>$(GamePath)\MelonLoader\Il2CppAssemblies\UnityEngine.InputLegacyModule.dll</HintPath>
             <Private>false</Private>
