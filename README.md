@@ -55,6 +55,17 @@ Adds push-to-talk functionality to the Dissonance VOIP system.
 | V (hold) | Push-to-talk (unmutes while held) |
 | F9 | Dump Dissonance voice system info to log |
 
+### SceneLoader (work in progress, on branch `sceneloader-wip`)
+
+Loads custom Unity AssetBundle scenes inside the game with full player migration, plus a desert test scene with networked rideable trains. See [SceneLoader/README.md](SceneLoader/README.md) for the full story — this mod is unique in that it also ships a companion Unity Editor project (`UnitySceneProject/`) for authoring custom scenes.
+
+**Controls:**
+| Key | Action |
+|-----|--------|
+| F4 | Open scene picker / return to main world |
+| Ctrl+F4 | Dump diagnostics |
+| Shift+F4 | Dump world dimensions |
+
 ### TestMod
 
 Minimal developer utility for verifying MelonLoader is working. Logs a message on pressing F7, no gameplay features.
@@ -103,6 +114,9 @@ cp PushToTalk/bin/Release/net6.0/PushToTalk.dll "C:\Program Files (x86)\Steam\st
 
 # YetiHunt
 cp YetiHunt/bin/Release/net6.0/YetiHunt.dll "C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\"
+
+# SceneLoader (on branch sceneloader-wip)
+cp SceneLoader/bin/Release/net6.0/SceneLoader.dll "C:\Program Files (x86)\Steam\steamapps\common\Sledding Game\Mods\"
 ```
 
 ## First-Time Setup

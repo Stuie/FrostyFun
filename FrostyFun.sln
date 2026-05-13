@@ -20,6 +20,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RespawnFlags", "RespawnFlag
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RespawnFlags.Tests", "RespawnFlags.Tests\RespawnFlags.Tests.csproj", "{7D4F1B5C-3E6F-4A8B-9C0D-1F2E3A4B5C6D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SceneLoader", "SceneLoader\SceneLoader.csproj", "{85D10165-EA4F-44EF-8C70-25E0E469C6A4}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -150,6 +152,18 @@ Global
 		{7D4F1B5C-3E6F-4A8B-9C0D-1F2E3A4B5C6D}.Release|x64.Build.0 = Release|Any CPU
 		{7D4F1B5C-3E6F-4A8B-9C0D-1F2E3A4B5C6D}.Release|x86.ActiveCfg = Release|Any CPU
 		{7D4F1B5C-3E6F-4A8B-9C0D-1F2E3A4B5C6D}.Release|x86.Build.0 = Release|Any CPU
+		{85D10165-EA4F-44EF-8C70-25E0E469C6A4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{85D10165-EA4F-44EF-8C70-25E0E469C6A4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{85D10165-EA4F-44EF-8C70-25E0E469C6A4}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{85D10165-EA4F-44EF-8C70-25E0E469C6A4}.Debug|x64.Build.0 = Debug|Any CPU
+		{85D10165-EA4F-44EF-8C70-25E0E469C6A4}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{85D10165-EA4F-44EF-8C70-25E0E469C6A4}.Debug|x86.Build.0 = Debug|Any CPU
+		{85D10165-EA4F-44EF-8C70-25E0E469C6A4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{85D10165-EA4F-44EF-8C70-25E0E469C6A4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{85D10165-EA4F-44EF-8C70-25E0E469C6A4}.Release|x64.ActiveCfg = Release|Any CPU
+		{85D10165-EA4F-44EF-8C70-25E0E469C6A4}.Release|x64.Build.0 = Release|Any CPU
+		{85D10165-EA4F-44EF-8C70-25E0E469C6A4}.Release|x86.ActiveCfg = Release|Any CPU
+		{85D10165-EA4F-44EF-8C70-25E0E469C6A4}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
