@@ -3,6 +3,10 @@ using UnityEngine;
 using System;
 using System.Linq;
 using System.Reflection;
+using FrostyFun.Shared.Il2Cpp;
+using FrostyFun.Shared.Logging;
+using FrostyFun.Shared.Players;
+using FrostyFun.Shared.UI;
 using Il2Cpp;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Object = UnityEngine.Object;
@@ -33,15 +37,8 @@ namespace RacePicker
         private bool _showUI = false;
         private string _currentScene = "";
 
-        // Cursor state backup
-        private bool _previousCursorVisible;
-        private CursorLockMode _previousLockState;
-
-        // Components to disable while UI is open
-        private Component _playerLocalInput;
-        private Component _playerCameraControl;
-        private bool _playerLocalInputWasEnabled;
-        private bool _playerCameraControlWasEnabled;
+        private PlayerInputBlocker _inputBlocker;
+        private CursorSnapshot _cursorSnapshot;
 
         // Race flag references (cached after scene load)
         private PlaceableRaceInteractable _startFlag;
@@ -68,6 +65,7 @@ namespace RacePicker
 
         public override void OnInitializeMelon()
         {
+            _inputBlocker = new PlayerInputBlocker(new MelonLoggerAdapter(Melon<RacePickerMod>.Logger));
             LoadPreference();
             LoadGreenPreference();
             Melon<RacePickerMod>.Logger.Msg("Race Picker loaded!");
@@ -81,8 +79,7 @@ namespace RacePicker
         {
             _currentScene = sceneName;
             _showUI = false;
-            _playerLocalInput = null;
-            _playerCameraControl = null;
+            _inputBlocker.Reset();
 
             // Reset race flag state - will re-search on next Update
             _startFlag = null;
@@ -135,11 +132,7 @@ namespace RacePicker
         public override void OnLateUpdate()
         {
             if (_showUI)
-            {
-                Cursor.visible = true;
-                Cursor.lockState = CursorLockMode.None;
-                Cursor.SetCursor(null, Vector2.zero, CursorMode.Auto);
-            }
+                CursorState.ShowFree();
         }
 
         public override void OnGUI()
@@ -169,24 +162,13 @@ namespace RacePicker
         {
             if (_texturesInitialized) return;
 
-            _bgTexture = MakeTexture(2, 2, new Color(0.1f, 0.1f, 0.15f, 0.95f));
-            _buttonTexture = MakeTexture(2, 2, new Color(0.25f, 0.25f, 0.35f, 1f));
-            _buttonHoverTexture = MakeTexture(2, 2, new Color(0.35f, 0.35f, 0.5f, 1f));
-            _buttonSelectedTexture = MakeTexture(2, 2, new Color(0.2f, 0.5f, 0.3f, 1f));
-            _cursorTexture = MakeCursorTexture();
+            _bgTexture = TextureFactory.MakeSolid(new Color(0.1f, 0.1f, 0.15f, 0.95f));
+            _buttonTexture = TextureFactory.MakeSolid(new Color(0.25f, 0.25f, 0.35f, 1f));
+            _buttonHoverTexture = TextureFactory.MakeSolid(new Color(0.35f, 0.35f, 0.5f, 1f));
+            _buttonSelectedTexture = TextureFactory.MakeSolid(new Color(0.2f, 0.5f, 0.3f, 1f));
+            _cursorTexture = CursorTextures.MakeArrowCursor();
 
             _texturesInitialized = true;
-        }
-
-        private static Texture2D MakeTexture(int width, int height, Color color)
-        {
-            Color[] pixels = new Color[width * height];
-            for (int i = 0; i < pixels.Length; i++)
-                pixels[i] = color;
-            Texture2D texture = new Texture2D(width, height);
-            texture.SetPixels(pixels);
-            texture.Apply();
-            return texture;
         }
 
         private void DrawRoutePickerUI()
@@ -365,160 +347,19 @@ namespace RacePicker
 
         private void OpenUI()
         {
-            _previousCursorVisible = Cursor.visible;
-            _previousLockState = Cursor.lockState;
-
-            Cursor.visible = true;
-            Cursor.lockState = CursorLockMode.None;
-
-            DisablePlayerInput();
+            _cursorSnapshot = CursorState.Snapshot();
+            CursorState.ShowFree();
+            _inputBlocker.Disable();
             _showUI = true;
             Melon<RacePickerMod>.Logger.Msg("UI opened");
         }
 
         private void CloseUI()
         {
-            EnablePlayerInput();
-
-            Cursor.visible = _previousCursorVisible;
-            Cursor.lockState = _previousLockState;
-
+            _inputBlocker.Restore();
+            CursorState.Restore(_cursorSnapshot);
             _showUI = false;
             Melon<RacePickerMod>.Logger.Msg("UI closed");
-        }
-
-        private void DisablePlayerInput()
-        {
-            try
-            {
-                var playerInputObj = GameObject.Find("Player Input");
-                if (playerInputObj != null)
-                {
-                    var components = playerInputObj.GetComponents<Component>();
-                    foreach (var comp in components)
-                    {
-                        if (comp != null && GetIl2CppTypeName(comp) == "PlayerLocalInput")
-                        {
-                            _playerLocalInput = comp;
-                            var behaviour = comp.TryCast<Behaviour>();
-                            if (behaviour != null)
-                            {
-                                _playerLocalInputWasEnabled = behaviour.enabled;
-                                behaviour.enabled = false;
-                            }
-                            break;
-                        }
-                    }
-                }
-
-                var playerObj = GameObject.Find("Player Networked(Clone)");
-                if (playerObj != null)
-                {
-                    var components = playerObj.GetComponents<Component>();
-                    foreach (var comp in components)
-                    {
-                        if (comp != null && GetIl2CppTypeName(comp) == "PlayerCameraControl")
-                        {
-                            _playerCameraControl = comp;
-                            var behaviour = comp.TryCast<Behaviour>();
-                            if (behaviour != null)
-                            {
-                                _playerCameraControlWasEnabled = behaviour.enabled;
-                                behaviour.enabled = false;
-                            }
-                            break;
-                        }
-                    }
-                }
-
-                var cinemachineObj = GameObject.Find("CinemachineCamera (makes parent null on start)");
-                if (cinemachineObj != null)
-                {
-                    var components = cinemachineObj.GetComponents<Component>();
-                    foreach (var comp in components)
-                    {
-                        string typeName = GetIl2CppTypeName(comp);
-                        if (typeName.Contains("Cinemachine") || typeName.Contains("Input"))
-                        {
-                            var behaviour = comp.TryCast<Behaviour>();
-                            if (behaviour != null && behaviour.enabled)
-                                behaviour.enabled = false;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Melon<RacePickerMod>.Logger.Warning($"Error disabling input: {ex.Message}");
-            }
-        }
-
-        private void EnablePlayerInput()
-        {
-            try
-            {
-                if (_playerLocalInput != null)
-                {
-                    var behaviour = _playerLocalInput.TryCast<Behaviour>();
-                    if (behaviour != null)
-                        behaviour.enabled = _playerLocalInputWasEnabled;
-                }
-
-                if (_playerCameraControl != null)
-                {
-                    var behaviour = _playerCameraControl.TryCast<Behaviour>();
-                    if (behaviour != null)
-                        behaviour.enabled = _playerCameraControlWasEnabled;
-                }
-
-                var cinemachineObj = GameObject.Find("CinemachineCamera (makes parent null on start)");
-                if (cinemachineObj != null)
-                {
-                    var components = cinemachineObj.GetComponents<Component>();
-                    foreach (var comp in components)
-                    {
-                        string typeName = GetIl2CppTypeName(comp);
-                        if (typeName.Contains("Cinemachine") || typeName.Contains("Input"))
-                        {
-                            var behaviour = comp.TryCast<Behaviour>();
-                            if (behaviour != null)
-                                behaviour.enabled = true;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Melon<RacePickerMod>.Logger.Warning($"Error enabling input: {ex.Message}");
-            }
-        }
-
-        private static Texture2D MakeCursorTexture()
-        {
-            int size = 16;
-            Texture2D tex = new Texture2D(size, size);
-            Color transparent = new Color(0, 0, 0, 0);
-            Color white = Color.white;
-
-            for (int y = 0; y < size; y++)
-                for (int x = 0; x < size; x++)
-                    tex.SetPixel(x, y, transparent);
-
-            tex.SetPixel(0, 15, white);
-            tex.SetPixel(0, 14, white); tex.SetPixel(1, 14, white);
-            tex.SetPixel(0, 13, white); tex.SetPixel(1, 13, white); tex.SetPixel(2, 13, white);
-            tex.SetPixel(0, 12, white); tex.SetPixel(1, 12, white); tex.SetPixel(2, 12, white); tex.SetPixel(3, 12, white);
-            tex.SetPixel(0, 11, white); tex.SetPixel(1, 11, white); tex.SetPixel(2, 11, white); tex.SetPixel(3, 11, white); tex.SetPixel(4, 11, white);
-            tex.SetPixel(0, 10, white); tex.SetPixel(1, 10, white); tex.SetPixel(2, 10, white); tex.SetPixel(3, 10, white); tex.SetPixel(4, 10, white); tex.SetPixel(5, 10, white);
-            tex.SetPixel(0, 9, white); tex.SetPixel(1, 9, white); tex.SetPixel(2, 9, white); tex.SetPixel(3, 9, white); tex.SetPixel(4, 9, white); tex.SetPixel(5, 9, white); tex.SetPixel(6, 9, white);
-            tex.SetPixel(0, 8, white); tex.SetPixel(1, 8, white); tex.SetPixel(2, 8, white); tex.SetPixel(3, 8, white); tex.SetPixel(4, 8, white);
-            tex.SetPixel(0, 7, white); tex.SetPixel(1, 7, white); tex.SetPixel(2, 7, white); tex.SetPixel(4, 7, white); tex.SetPixel(5, 7, white);
-            tex.SetPixel(0, 6, white); tex.SetPixel(1, 6, white); tex.SetPixel(5, 6, white); tex.SetPixel(6, 6, white);
-            tex.SetPixel(0, 5, white); tex.SetPixel(6, 5, white); tex.SetPixel(7, 5, white);
-            tex.SetPixel(7, 4, white); tex.SetPixel(8, 4, white);
-
-            tex.Apply();
-            return tex;
         }
 
         private void TryInitializeRaceFlags()
@@ -752,7 +593,7 @@ namespace RacePicker
                     foreach (var comp in components)
                     {
                         if (comp == null) continue;
-                        Melon<RacePickerMod>.Logger.Msg($"    comp: {GetIl2CppTypeName(comp)}");
+                        Melon<RacePickerMod>.Logger.Msg($"    comp: {comp.GetIl2CppTypeName()}");
                     }
                 }
             }
@@ -802,17 +643,5 @@ namespace RacePicker
             return path;
         }
 
-        private static string GetIl2CppTypeName(Component comp)
-        {
-            try
-            {
-                var il2cppType = comp.GetIl2CppType();
-                return il2cppType?.Name ?? comp.GetType().Name;
-            }
-            catch
-            {
-                return comp.GetType().Name;
-            }
-        }
     }
 }

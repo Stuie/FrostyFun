@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using FrostyFun.Shared.UI;
 using RespawnFlags.Services;
 
 namespace RespawnFlags.UI
@@ -389,50 +390,13 @@ namespace RespawnFlags.UI
         {
             if (_texturesInitialized) return;
 
-            _bgTexture = MakeTexture(new Color(0.1f, 0.1f, 0.15f, 0.95f));
-            _buttonTexture = MakeTexture(new Color(0.25f, 0.25f, 0.35f, 1f));
-            _buttonHoverTexture = MakeTexture(new Color(0.35f, 0.35f, 0.5f, 1f));
-            _buttonDangerTexture = MakeTexture(new Color(0.35f, 0.2f, 0.2f, 1f));
-            _cursorTexture = MakeCursorTexture();
+            _bgTexture = TextureFactory.MakeSolid(new Color(0.1f, 0.1f, 0.15f, 0.95f));
+            _buttonTexture = TextureFactory.MakeSolid(new Color(0.25f, 0.25f, 0.35f, 1f));
+            _buttonHoverTexture = TextureFactory.MakeSolid(new Color(0.35f, 0.35f, 0.5f, 1f));
+            _buttonDangerTexture = TextureFactory.MakeSolid(new Color(0.35f, 0.2f, 0.2f, 1f));
+            _cursorTexture = CursorTextures.MakeArrowCursor();
 
             _texturesInitialized = true;
-        }
-
-        private static Texture2D MakeTexture(Color color)
-        {
-            var tex = new Texture2D(2, 2);
-            var pixels = new Color[] { color, color, color, color };
-            tex.SetPixels(pixels);
-            tex.Apply();
-            return tex;
-        }
-
-        private static Texture2D MakeCursorTexture()
-        {
-            int size = 16;
-            var tex = new Texture2D(size, size);
-            var transparent = new Color(0, 0, 0, 0);
-            var white = Color.white;
-
-            for (int cy = 0; cy < size; cy++)
-                for (int cx = 0; cx < size; cx++)
-                    tex.SetPixel(cx, cy, transparent);
-
-            tex.SetPixel(0, 15, white);
-            tex.SetPixel(0, 14, white); tex.SetPixel(1, 14, white);
-            tex.SetPixel(0, 13, white); tex.SetPixel(1, 13, white); tex.SetPixel(2, 13, white);
-            tex.SetPixel(0, 12, white); tex.SetPixel(1, 12, white); tex.SetPixel(2, 12, white); tex.SetPixel(3, 12, white);
-            tex.SetPixel(0, 11, white); tex.SetPixel(1, 11, white); tex.SetPixel(2, 11, white); tex.SetPixel(3, 11, white); tex.SetPixel(4, 11, white);
-            tex.SetPixel(0, 10, white); tex.SetPixel(1, 10, white); tex.SetPixel(2, 10, white); tex.SetPixel(3, 10, white); tex.SetPixel(4, 10, white); tex.SetPixel(5, 10, white);
-            tex.SetPixel(0, 9, white); tex.SetPixel(1, 9, white); tex.SetPixel(2, 9, white); tex.SetPixel(3, 9, white); tex.SetPixel(4, 9, white); tex.SetPixel(5, 9, white); tex.SetPixel(6, 9, white);
-            tex.SetPixel(0, 8, white); tex.SetPixel(1, 8, white); tex.SetPixel(2, 8, white); tex.SetPixel(3, 8, white); tex.SetPixel(4, 8, white);
-            tex.SetPixel(0, 7, white); tex.SetPixel(1, 7, white); tex.SetPixel(2, 7, white); tex.SetPixel(4, 7, white); tex.SetPixel(5, 7, white);
-            tex.SetPixel(0, 6, white); tex.SetPixel(1, 6, white); tex.SetPixel(5, 6, white); tex.SetPixel(6, 6, white);
-            tex.SetPixel(0, 5, white); tex.SetPixel(6, 5, white); tex.SetPixel(7, 5, white);
-            tex.SetPixel(7, 4, white); tex.SetPixel(8, 4, white);
-
-            tex.Apply();
-            return tex;
         }
     }
 }

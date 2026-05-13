@@ -20,6 +20,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RespawnFlags", "RespawnFlag
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RespawnFlags.Tests", "RespawnFlags.Tests\RespawnFlags.Tests.csproj", "{7D4F1B5C-3E6F-4A8B-9C0D-1F2E3A4B5C6D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FrostyFun.Shared", "FrostyFun.Shared\FrostyFun.Shared.csproj", "{F678103C-613A-4CA4-AB00-3394EA1B8079}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -150,6 +152,18 @@ Global
 		{7D4F1B5C-3E6F-4A8B-9C0D-1F2E3A4B5C6D}.Release|x64.Build.0 = Release|Any CPU
 		{7D4F1B5C-3E6F-4A8B-9C0D-1F2E3A4B5C6D}.Release|x86.ActiveCfg = Release|Any CPU
 		{7D4F1B5C-3E6F-4A8B-9C0D-1F2E3A4B5C6D}.Release|x86.Build.0 = Release|Any CPU
+		{F678103C-613A-4CA4-AB00-3394EA1B8079}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F678103C-613A-4CA4-AB00-3394EA1B8079}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F678103C-613A-4CA4-AB00-3394EA1B8079}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{F678103C-613A-4CA4-AB00-3394EA1B8079}.Debug|x64.Build.0 = Debug|Any CPU
+		{F678103C-613A-4CA4-AB00-3394EA1B8079}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{F678103C-613A-4CA4-AB00-3394EA1B8079}.Debug|x86.Build.0 = Debug|Any CPU
+		{F678103C-613A-4CA4-AB00-3394EA1B8079}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F678103C-613A-4CA4-AB00-3394EA1B8079}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F678103C-613A-4CA4-AB00-3394EA1B8079}.Release|x64.ActiveCfg = Release|Any CPU
+		{F678103C-613A-4CA4-AB00-3394EA1B8079}.Release|x64.Build.0 = Release|Any CPU
+		{F678103C-613A-4CA4-AB00-3394EA1B8079}.Release|x86.ActiveCfg = Release|Any CPU
+		{F678103C-613A-4CA4-AB00-3394EA1B8079}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

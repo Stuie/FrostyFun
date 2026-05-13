@@ -55,9 +55,66 @@ Adds push-to-talk functionality to the Dissonance VOIP system.
 | V (hold) | Push-to-talk (unmutes while held) |
 | F9 | Dump Dissonance voice system info to log |
 
+### RespawnFlags
+
+Quick teleport to spawn points (race starts, lodge locations, plus 5 user-placed markers).
+
+**Features:**
+- F8 opens a spawn-point picker; click any entry to teleport
+- CapsLock double-tap = instantly re-teleport to the last used point
+- Right-click a user marker to rename it; persists across sessions
+- Automatically leaves any active race before teleporting
+
+**Controls:**
+| Key | Action |
+|-----|--------|
+| F8 | Open/close spawn point UI |
+| Ctrl+F8 | Dump race / UI info to log |
+| CapsLock (double-tap) | Quick respawn at last used point |
+
+### RacePicker
+
+Pick which finish line a shared race start flag uses.
+
+**Features:**
+- F5 opens a route picker for the Yellow Race ("Do A Trick" / "Frozen Feet") and Green Race ("Full Course" / "Split Slopes")
+- Selection persists across sessions
+- "Random" option lets the game pick
+
+**Controls:**
+| Key | Action |
+|-----|--------|
+| F5 | Open/close route picker UI |
+| Ctrl+F5 | Dump race types / GameObjects to log |
+
+### YetiHunt (WIP)
+
+Battle Royale yeti hunting game mode. Work in progress — not yet a polished gameplay loop.
+
+**Controls:**
+| Key | Action |
+|-----|--------|
+| F10 | Start game |
+| F11 | Dump yeti info to log |
+| F12 | Dump network info to log |
+
 ### TestMod
 
 Minimal developer utility for verifying MelonLoader is working. Logs a message on pressing F7, no gameplay features.
+
+## Shared code
+
+Common functionality used across multiple mods (player teleportation, IMGUI texture/cursor helpers, Il2Cpp type resolution, `PlayerLocalInput`/`PlayerCameraControl` blocking while a mod UI is open) lives in **`FrostyFun.Shared/`**. See [`FrostyFun.Shared/README.md`](FrostyFun.Shared/README.md) for the full inventory.
+
+It is **not** a separate DLL — each consuming mod compiles the shared source directly into its own assembly via a single line in the mod's `.csproj`:
+
+```xml
+<Import Project="..\FrostyFun.Shared\FrostyFun.Shared.targets" />
+```
+
+Each mod ships as a self-contained DLL. There is no shared library to deploy alongside, and two mods built against different revisions of Shared cannot conflict at runtime (their types live in different assemblies).
+
+**If you're adding functionality that another mod might want to use, put it in `FrostyFun.Shared` rather than duplicating it.**
 
 ## Requirements
 
@@ -103,6 +160,12 @@ cp PushToTalk/bin/Release/net6.0/PushToTalk.dll "C:\Program Files (x86)\Steam\st
 
 # YetiHunt
 cp YetiHunt/bin/Release/net6.0/YetiHunt.dll "C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\"
+
+# RespawnFlags
+cp RespawnFlags/bin/Release/net6.0/RespawnFlags.dll "C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\"
+
+# RacePicker
+cp RacePicker/bin/Release/net6.0/RacePicker.dll "C:\Program Files (x86)\Steam\steamapps\common\Sledding Game Demo\Mods\"
 ```
 
 ## First-Time Setup
